@@ -133,9 +133,9 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
             cells=cells,
             nfaces=nfaces,
             degree=degree,
-            thoughput_cpu=nfaces / time(b_cpu) * 1e9, # ns - >sec
-            thoughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
-            thoughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
+            throughput_cpu=nfaces / time(b_cpu) * 1e9, # ns - >sec
+            throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
+            throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
     )
 end
 
