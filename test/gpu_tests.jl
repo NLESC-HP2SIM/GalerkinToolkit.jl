@@ -21,21 +21,27 @@ catch
     false
 end
 
+function is_cuda_available()
+    return HAS_CUDA && !isempty(CUDA.devices())
+end
+
+function is_rocm_available()
+    return HAS_AMD && !isempty(AMDGPU.devices())
+end
+
 function select_backend()
-    if HAS_CUDA && !isempty(CUDA.devices())
+    if is_cuda_available()
         dev = first(CUDA.devices())
         println("using CUDA backend: $(CUDA.name(dev))")
         return CUDABackend()
-    end
-
-    if HAS_AMD && !isempty(AMDGPU.devices())
+    elseif is_rocm_available()
         dev = first(AMDGPU.devices())
         println("using AMD backend: $(AMDGPU.HIP.name(dev))")
         return ROCBackend()
+    else
+        println("using CPU backend")
+        return CPU()
     end
-
-    println("using CPU backend")
-    return CPU()
 end
 
 const dev = select_backend()
@@ -127,21 +133,21 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
     # Launch kernel on the GPU
     threads_in_block = 256
     blocks_in_grid = cld(nfaces, threads_in_block)
-    if HAS_CUDA
+    if is_cuda_available()
         @cuda threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
         r_cuda = sum(contributions)
-    elseif HAS_AMD
+    elseif is_rocm_available()
         @roc groupsize=threads_in_block gridsize=blocks_in_grid hip_kernel!(contributions,dΩ_faces_gpu)
         r_hip = sum(contributions)
     end
 
-    if HAS_CUDA
+    if is_cuda_available()
         b_cuda = @benchmark begin
             @cuda threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
             sum($contributions)
             CUDA.synchronize()
         end
-    elseif HAS_AMD
+    elseif is_rocm_available()
         b_hip = @benchmark begin
             @roc groupsize=$threads_in_block gridsize=$blocks_in_grid hip_kernel!($contributions,$dΩ_faces_gpu)
             sum($contributions)
@@ -155,7 +161,7 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
         KA.synchronize($dev)
     end
 
-    if HAS_CUDA
+    if is_cuda_available
         @test r_cuda≈r_cpu
         return (
                 cells=cells,
@@ -165,7 +171,7 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
                 throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
                 throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
         )
-    elseif HAS_AMD
+    elseif is_rocm_available
         @test r_hip≈r_cpu
         return (
                 cells=cells,
