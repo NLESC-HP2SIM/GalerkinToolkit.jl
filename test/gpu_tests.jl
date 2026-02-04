@@ -30,8 +30,8 @@ function select_backend()
 
     if HAS_AMD && !isempty(AMDGPU.devices())
         dev = first(AMDGPU.devices())
-        println("using AMD backend: $(AMDGPU.name(dev))")
-        return AMDGPUBackend()
+        println("using AMD backend: $(AMDGPU.HIP.name(dev))")
+        return ROCBackend()
     end
 
     println("using CPU backend")
