@@ -45,11 +45,11 @@ function select_backend()
 end
 
 if is_cuda_available()
-    macro call_cuda(args...)
+    macro call_kernel(args...)
         esc(:(@cuda $(args...)))
     end
 elseif is_rocm_available()
-    macro call_rocm(args...)
+    macro call_kernel(args...)
         esc(:(@roc $(args...)))
     end
 end
@@ -143,22 +143,22 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
     threads_in_block = 256
     blocks_in_grid = cld(nfaces, threads_in_block)
     if is_cuda_available()
-        @call_cuda threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
+        @call_kernel threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
         r_cuda = sum(contributions)
     elseif is_rocm_available()
-        @call_rocm groupsize=threads_in_block gridsize=blocks_in_grid hip_kernel!(contributions,dΩ_faces_gpu)
+        @call_kernel groupsize=threads_in_block gridsize=blocks_in_grid hip_kernel!(contributions,dΩ_faces_gpu)
         r_hip = sum(contributions)
     end
 
     if is_cuda_available()
         b_cuda = @benchmark begin
-            @call_cuda threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
+            @call_kernel threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
             sum($contributions)
             CUDA.synchronize()
         end
     elseif is_rocm_available()
         b_hip = @benchmark begin
-            @call_rocm groupsize=$threads_in_block gridsize=$blocks_in_grid hip_kernel!($contributions,$dΩ_faces_gpu)
+            @call_kernel groupsize=$threads_in_block gridsize=$blocks_in_grid hip_kernel!($contributions,$dΩ_faces_gpu)
             sum($contributions)
             AMDGPU.synchronize()
        end
