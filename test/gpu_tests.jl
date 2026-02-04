@@ -60,6 +60,22 @@ function cuda_kernel!(contributions,dΩ_faces_gpu)
     return nothing
 end
 
+function hip_kernel!(contributions,dΩ_faces_gpu)
+    face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+    if face_id > length(dΩ_faces_gpu)
+        return nothing
+    end
+    dΩ_face = dΩ_faces_gpu[face_id]
+    s = 0.0
+    for dΩ_point in GT.each_point(dΩ_face)
+        x = GT.coordinate(dΩ_point)
+        dx = GT.weight(dΩ_point)
+        s += f(x)*dx
+    end
+    contributions[face_id] = s
+    return nothing
+end
+
 @kernel function gpu_kernel!(contributions,dΩ_faces_gpu)
     face_id = @index(Global)
     if face_id <= length(dΩ_faces_gpu)
@@ -108,17 +124,28 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
     # Now, move data to GPU
     dΩ_faces_gpu = adapt(dev, dΩ_faces_cpu)
     contributions = KA.zeros(dev,Float64,nfaces)
-
     # Launch kernel on the GPU
     threads_in_block = 256
     blocks_in_grid = cld(nfaces, threads_in_block)
-    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
-    r_cuda = sum(contributions)
+    if HAS_CUDA
+        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
+        r_cuda = sum(contributions)
+    else if HAS_AMD
+        @roc groupsize=threads_in_block gridsize=blocks_in_grid hip_kernel!(contributions,dΩ_faces_gpu)
+        r_hip = sum(contributions)
+    end
 
+    if HAS_CUDA
     b_cuda = @benchmark begin
         @cuda threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
         sum($contributions)
         CUDA.synchronize()
+    end
+    else if HAS_AMD
+        b_hip = @benchmark begin
+            @roc groupsize=$threads_in_block gridsize=$blocks_in_grid hip_kernel!($contributions,$dΩ_faces_gpu)
+            sum($contributions)
+            AMDGPU.synchronize()
     end
 
     b_gpu = @benchmark begin
@@ -127,16 +154,28 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
         KA.synchronize($dev)
     end
 
-    @test r_cuda≈r_cpu
+    if HAS_CUDA
+        @test r_cuda≈r_cpu
+        return (
+                cells=cells,
+                nfaces=nfaces,
+                degree=degree,
+                throughput_cpu=nfaces / time(b_cpu) * 1e9, # ns - >sec
+                throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
+                throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
+        )
+    else if HAS_AMD
+        @test r_hip≈r_cpu
+        return (
+                cells=cells,
+                nfaces=nfaces,
+                degree=degree,
+                throughput_cpu=nfaces / time(b_cpu) * 1e9, # ns - >sec
+                throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
+                throughput_hip=nfaces / time(b_hip) * 1e9, # ns -> sec
+        )
+    end
 
-    return (
-            cells=cells,
-            nfaces=nfaces,
-            degree=degree,
-            throughput_cpu=nfaces / time(b_cpu) * 1e9, # ns - >sec
-            throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
-            throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
-    )
 end
 
 
