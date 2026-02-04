@@ -130,22 +130,23 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
     if HAS_CUDA
         @cuda threads=threads_in_block blocks=blocks_in_grid cuda_kernel!(contributions,dΩ_faces_gpu)
         r_cuda = sum(contributions)
-    else if HAS_AMD
+    elseif HAS_AMD
         @roc groupsize=threads_in_block gridsize=blocks_in_grid hip_kernel!(contributions,dΩ_faces_gpu)
         r_hip = sum(contributions)
     end
 
     if HAS_CUDA
-    b_cuda = @benchmark begin
-        @cuda threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
-        sum($contributions)
-        CUDA.synchronize()
-    end
-    else if HAS_AMD
+        b_cuda = @benchmark begin
+            @cuda threads=$threads_in_block blocks=$blocks_in_grid cuda_kernel!($contributions,$dΩ_faces_gpu)
+            sum($contributions)
+            CUDA.synchronize()
+        end
+    elseif HAS_AMD
         b_hip = @benchmark begin
             @roc groupsize=$threads_in_block gridsize=$blocks_in_grid hip_kernel!($contributions,$dΩ_faces_gpu)
             sum($contributions)
             AMDGPU.synchronize()
+       end
     end
 
     b_gpu = @benchmark begin
@@ -164,7 +165,7 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
                 throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
                 throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
         )
-    else if HAS_AMD
+    elseif HAS_AMD
         @test r_hip≈r_cpu
         return (
                 cells=cells,
