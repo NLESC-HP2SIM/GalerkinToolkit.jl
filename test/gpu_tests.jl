@@ -45,12 +45,20 @@ function select_backend()
 end
 
 if is_cuda_available()
-    macro call_kernel(name, threads_in_block, blocks_in_grid, args...)
-        esc(:(@cuda threads=$threads_in_block blocks=$blocks_in_grid $name\!($(args...))))
+    macro call_kernel(name, threads, blocks, args...)
+        func_name = name isa Symbol ? Symbol(name, :!) : name
+        ex = :( @cuda threads=$threads blocks=$blocks $func_name($(args...)) )
+        return esc(ex)
     end
 elseif is_rocm_available()
-    macro call_kernel(name, threads_in_block, blocks_in_grid, args...)
-        esc(:(@roc groupsize=$threads_in_block gridsize=$blocks_in_grid $name\!($(args...))))
+    macro call_kernel(name, threads, blocks, args...)
+        func_name = name isa Symbol ? Symbol(name, :!) : name
+        ex = :( AMDGPU.@roc groupsize=$threads gridsize=$blocks $func_name($(args...)) )
+        return esc(ex)
+    end
+else
+    macro call_kernel(args...)
+        error("No GPU backend available to compile @call_kernel")
     end
 end
 
