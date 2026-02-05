@@ -178,7 +178,7 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
         KA.synchronize($dev)
     end
 
-    if is_cuda_available
+    if is_cuda_available()
         @test r_cuda≈r_cpu
         return (
                 cells=cells,
@@ -188,7 +188,7 @@ function benchmark_case(;cells::Tuple{Int, Int}, degree::Int)
                 throughput_gpu=nfaces / time(b_gpu) * 1e9, # ns -> sec
                 throughput_cuda=nfaces / time(b_cuda) * 1e9, # ns -> sec
         )
-    elseif is_rocm_available
+    elseif is_rocm_available()
         @test r_hip≈r_cpu
         return (
                 cells=cells,
