@@ -393,8 +393,8 @@ function main_gpu(params)
     end
 
     if is_cuda_available()
-        println("Loop 1: throughput_cuda = ", nfaces / time(t1_cuda) * 1e9)
-        println("Loop 2: throughput_cuda = ", nfaces / time(t2_cuda) * 1e9)
+        println("Loop 1: CUDA throughput is ", nfaces / time(t1_cuda) * 1e9, " faces per second.")
+        println("Loop 2: CUDA throughput is ", nfaces / time(t2_cuda) * 1e9, " faces per second.")
     end
 end
 
@@ -404,6 +404,7 @@ for face_dofs_layout in layouts
         params = (;face_nodes_layout,face_dofs_layout)
         main_cpu(params)
         main_gpu(params)
+        println()
     end
 end
 
