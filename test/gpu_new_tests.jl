@@ -380,11 +380,9 @@ function main_gpu(params)
 
     # This is not needed in practice, just to make sure that
     # we do not break anything when adapting.
-    if is_cuda_available()
-        dΩ_faces_gpu = CUDA.cu(dΩ_faces_cpu)
-        V_faces_gpu = CUDA.cu(V_faces_cpu)
-        uh_faces_gpu = CUDA.cu(uh_faces_cpu)
-    end
+    dΩ_faces_gpu = adapt(dev, dΩ_faces_cpu)
+    V_faces_gpu = adapt(dev, V_faces_cpu)
+    uh_faces_gpu = adapt(dev, uh_faces_cpu)
 
     #TODO
     #granularity = Val(:face_per_thread) # Val(:face_per_block)
