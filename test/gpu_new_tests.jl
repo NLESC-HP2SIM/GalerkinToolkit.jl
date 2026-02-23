@@ -3,7 +3,7 @@ module GPUNewTests
 using Test
 using LinearAlgebra
 using SparseArrays
-import Adapt
+using Adapt
 using BenchmarkTools
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
