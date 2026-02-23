@@ -374,15 +374,26 @@ function main_gpu(params)
     if is_cuda_available()
         # Launch kernel 1
         threads_in_block = 256
-        blocks_in_grid = ceil(Int, nfaces/256)
-        @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
-        @show r_gpu = sum(contributions)
-
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t1_cuda = @benchmark begin
+            @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
+            CUDA.synchronize()
+        end
+        @show r_cuda = sum(contributions)
+        
         # Launch kernel 2
         threads_in_block = 256
-        blocks_in_grid = ceil(Int, nfaces/256)
-        @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
-        @show r_gpu = sum(contributions)
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t2_cuda = @benchmark begin
+            @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
+            CUDA.synchronize()
+        end
+        @show r_cuda = sum(contributions)
+    end
+
+    if is_cuda_available()
+        println("Loop 1: throughput_cuda = ", nfaces / time(t1_cuda) * 1e9)
+        println("Loop 2: throughput_cuda = ", nfaces / time(t2_cuda) * 1e9)
     end
 end
 
