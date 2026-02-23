@@ -7,6 +7,64 @@ using SparseArrays
 import Adapt
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
+import KernelAbstractions as KA
+
+const HAS_CUDA = try
+    @eval using CUDA
+    true
+catch
+    false
+end
+
+const HAS_AMD = try
+    @eval using AMDGPU
+    true
+catch
+    false
+end
+
+function is_cuda_available()
+    return HAS_CUDA && !isempty(CUDA.devices())
+end
+
+function is_rocm_available()
+    return HAS_AMD && !isempty(AMDGPU.devices())
+end
+
+function select_backend()
+    if is_cuda_available()
+        dev = first(CUDA.devices())
+        println("using CUDA backend: $(CUDA.name(dev))")
+        return CUDABackend()
+    elseif is_rocm_available()
+        dev = first(AMDGPU.devices())
+        println("using AMD backend: $(AMDGPU.HIP.name(dev))")
+        return ROCBackend()
+    else
+        println("using CPU backend")
+        return CPU()
+    end
+end
+
+if is_cuda_available()
+    macro call_kernel(name, threads, blocks, args...)
+        func_name = name isa Symbol ? Symbol(name, :!) : name
+        ex = :( @cuda threads=$threads blocks=$blocks $func_name($(args...)) )
+        return esc(ex)
+    end
+elseif is_rocm_available()
+    macro call_kernel(name, threads, blocks, args...)
+        func_name = name isa Symbol ? Symbol(name, :!) : name
+        ex = :( AMDGPU.@roc groupsize=$threads gridsize=$blocks $func_name($(args...)) )
+        return esc(ex)
+    end
+else
+    macro call_kernel(args...)
+        error("No GPU backend available to compile @call_kernel")
+    end
+end
+
+const dev = select_backend()
 
 f(x) = 2*sin(sum(x))
 
