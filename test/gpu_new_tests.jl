@@ -1,6 +1,5 @@
 module GPUNewTests
 
-using CUDA
 using Test
 using LinearAlgebra
 using SparseArrays
@@ -284,7 +283,7 @@ function main_cpu(params)
 
 end
 
-function kernel_1!(contributions,dΩ_faces_gpu)
+function cuda_loop_1!(contributions,dΩ_faces_gpu)
     face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if face_id > length(dΩ_faces_gpu)
         return nothing
@@ -300,7 +299,7 @@ function kernel_1!(contributions,dΩ_faces_gpu)
     return nothing
 end
 
-function kernel_2!(contributions,uh_faces_gpu)
+function cuda_loop_2!(contributions,uh_faces_gpu)
     face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if face_id > length(uh_faces_gpu)
         return nothing
@@ -316,7 +315,7 @@ function kernel_2!(contributions,uh_faces_gpu)
     return nothing
 end
 
-function kernel_5!()
+function cuda_loop_5!()
     #TODO
 end
 
@@ -371,13 +370,13 @@ function main_gpu(params)
     # Launch kernel 1
     threads_in_block = 256
     blocks_in_grid = ceil(Int, nfaces/256)
-    @cuda threads=threads_in_block blocks=blocks_in_grid kernel_1!(contributions,dΩ_faces_gpu)
+    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_1(contributions,dΩ_faces_gpu)
     @show r_gpu = sum(contributions)
 
     # Launch kernel 2
     threads_in_block = 256
     blocks_in_grid = ceil(Int, nfaces/256)
-    @cuda threads=threads_in_block blocks=blocks_in_grid kernel_2!(contributions,uh_faces_gpu)
+    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_2(contributions,uh_faces_gpu)
     @show r_gpu = sum(contributions)
 
 end
@@ -391,8 +390,5 @@ for face_dofs_layout in layouts
         main_gpu(params)
     end
 end
-
-
-
 
 end # module
