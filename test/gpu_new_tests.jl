@@ -400,16 +400,15 @@ function main_gpu(params)
 
     nfaces = length(dΩ_faces_gpu)
     contributions = KA.zeros(dev, Float64, nfaces)
-    r_gpu = 0
 
     # Launch kernel 1
     threads_in_block = 256
     t1_gpu = @benchmark begin
         gpu_loop_1!($dev, $threads_in_block)($contributions, $dΩ_faces_gpu, ndrange=$nfaces)
-        global r_gpu = sum($contributions)
+        sum($contributions)
         KA.synchronize($dev)
     end
-    @show r_gpu
+    @show sum(contributions)
 
     if is_cuda_available()
         # Launch kernel 1
@@ -417,29 +416,29 @@ function main_gpu(params)
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_cuda = @benchmark begin
             @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
-            global r_gpu = sum($contributions)
+            sum($contributions)
             CUDA.synchronize()
         end
-        @show r_gpu  
+        @show sum(contributions)  
         # Launch kernel 2
         # threads_in_block = 256
         # blocks_in_grid = cld(nfaces, threads_in_block)
         # t2_cuda = @benchmark begin
         #     @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
-        #     global r_gpu = sum($contributions)
+        #     sum($contributions)
         #     CUDA.synchronize()
         # end
-        # @show r_gpu
+        # @show sum(contributions)
     elseif is_rocm_available()
         # Launch kernel 1
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_hip = @benchmark begin
             @call_kernel hip_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
-            global r_gpu = sum($contributions)
+            sum($contributions)
             AMDGPU.synchronize()
         end
-        @show r_gpu
+        @show sum(contributions)
     end
 
     println("Loop 1: KernelAbstractions throughput is ", nfaces / time(t1_gpu) * 1e9, " faces per second.")
