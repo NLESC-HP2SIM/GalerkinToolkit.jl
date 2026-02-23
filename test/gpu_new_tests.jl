@@ -4,6 +4,7 @@ using Test
 using LinearAlgebra
 using SparseArrays
 import Adapt
+using BenchmarkTools
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
 import KernelAbstractions as KA
