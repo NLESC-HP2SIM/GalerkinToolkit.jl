@@ -402,6 +402,7 @@ function main_gpu(params)
     contributions = KA.zeros(dev, Float64, nfaces)
 
     # Launch kernel 1
+    threads_in_block = 256
     t1_gpu = @benchmark begin
         gpu_loop_1!($dev, $threads_in_block)($contributions, $dΩ_faces_gpu, ndrange=$nfaces)
         sum($contributions)
