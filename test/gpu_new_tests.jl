@@ -348,9 +348,11 @@ function main_gpu(params)
 
     # This is not needed in practice, just to make sure that
     # we do not break anything when adapting.
-    dΩ_faces_gpu = CUDA.cu(dΩ_faces_cpu)
-    V_faces_gpu = CUDA.cu(V_faces_cpu)
-    uh_faces_gpu = CUDA.cu(uh_faces_cpu)
+    if is_cuda_available()
+        dΩ_faces_gpu = CUDA.cu(dΩ_faces_cpu)
+        V_faces_gpu = CUDA.cu(V_faces_cpu)
+        uh_faces_gpu = CUDA.cu(uh_faces_cpu)
+    end
 
     #TODO
     #granularity = Val(:face_per_thread) # Val(:face_per_block)
@@ -365,22 +367,24 @@ function main_gpu(params)
     #uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu,workspace_location)
 
     nfaces = length(dΩ_faces_gpu)
-    contributions = CUDA.zeros(Float64,nfaces)
+    if is_cuda_available()
+        contributions = CUDA.zeros(Float64,nfaces)
+    end
 
-    # Launch kernel 1
-    threads_in_block = 256
-    blocks_in_grid = ceil(Int, nfaces/256)
-    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_1(contributions,dΩ_faces_gpu)
-    @show r_gpu = sum(contributions)
+    if is_cuda_available()
+        # Launch kernel 1
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
+        @show r_gpu = sum(contributions)
 
-    # Launch kernel 2
-    threads_in_block = 256
-    blocks_in_grid = ceil(Int, nfaces/256)
-    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_2(contributions,uh_faces_gpu)
-    @show r_gpu = sum(contributions)
-
+        # Launch kernel 2
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
+        @show r_gpu = sum(contributions)
+    end
 end
-
 
 layouts = (GT.face_minor_array,GT.face_major_array)
 for face_dofs_layout in layouts
