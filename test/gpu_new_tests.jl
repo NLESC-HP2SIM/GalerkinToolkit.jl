@@ -7,6 +7,7 @@ import Adapt
 using BenchmarkTools
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
+using KernelAbstractions
 import KernelAbstractions as KA
 
 const HAS_CUDA = try
