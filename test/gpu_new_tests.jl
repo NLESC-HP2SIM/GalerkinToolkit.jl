@@ -405,9 +405,10 @@ function main_gpu(params)
     threads_in_block = 256
     t1_gpu = @benchmark begin
         gpu_loop_1!($dev, $threads_in_block)($contributions, $dΩ_faces_gpu, ndrange=$nfaces)
-        sum($contributions)
+        r_gpu = sum($contributions)
         KA.synchronize($dev)
     end
+    @show r_gpu
 
     if is_cuda_available()
         # Launch kernel 1
@@ -415,7 +416,7 @@ function main_gpu(params)
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_cuda = @benchmark begin
             @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
-            r_cuda = sum(contributions)
+            r_cuda = sum($contributions)
             CUDA.synchronize()
         end
         @show r_cuda  
@@ -424,7 +425,7 @@ function main_gpu(params)
         # blocks_in_grid = cld(nfaces, threads_in_block)
         # t2_cuda = @benchmark begin
         #     @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
-        #     r_cuda = sum(contributions)
+        #     r_cuda = sum($contributions)
         #     CUDA.synchronize()
         # end
         # @show r_cuda
@@ -434,7 +435,7 @@ function main_gpu(params)
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_hip = @benchmark begin
             @call_kernel hip_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
-            r_hip = sum(contributions)
+            r_hip = sum($contributions)
             AMDGPU.synchronize()
         end
         @show r_hip
