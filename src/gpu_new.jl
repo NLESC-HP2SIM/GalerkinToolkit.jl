@@ -207,12 +207,14 @@ quadrature(a::TabulatedSpace) = quadrature(tabulated_mesh(a))
 tabulated_mesh(a::TabulatedSpace) = a.tabulated_mesh
 tabulated_space(a::TabulatedSpace) = a
 tabulated_field(a::TabulatedSpace) = a
-reference_shape_functions(::typeof(value),a::TabulatedSpace) = a.reference_shape_functions_value
-reference_shape_functions(::typeof(gradient),a::TabulatedSpace) = a.reference_shape_functions_gradient
-reference_shape_functions(::typeof(jacobian),a::TabulatedSpace) = a.reference_shape_functions_jacobian
-shape_functions(::typeof(value),a::TabulatedSpace) = a.shape_functions_value
-shape_functions(::typeof(gradient),a::TabulatedSpace) = a.shape_functions_gradient
-shape_functions(::typeof(jacobian),a::TabulatedSpace) = a.shape_functions_jacobian
+reference_shape_functions(::Val{:value},a::TabulatedSpace) = a.reference_shape_functions_value
+reference_shape_functions(::Val{:gradient},a::TabulatedSpace) = a.reference_shape_functions_gradient
+reference_shape_functions(::Val{:jacobian},a::TabulatedSpace) = a.reference_shape_functions_jacobian
+reference_shape_functions(f,a) = reference_shape_functions(shape_function_to_val(f), a)
+shape_functions(::Val{:value},a::TabulatedSpace) = a.shape_functions_value
+shape_functions(::Val{:gradient},a::TabulatedSpace) = a.shape_functions_gradient
+shape_functions(::Val{:jacobian},a::TabulatedSpace) = a.shape_functions_jacobian
+shape_functions(f,a) = shape_functions(shape_function_to_val(f), a)
 face_dofs(a::TabulatedSpace) = a.face_dofs
 
 function tabulate(space::AbstractSpace,quadrature::AbstractQuadrature;tabulate=())
@@ -312,13 +314,13 @@ end
 function at_mesh_point(state::TabulatedSpace,face,mesh_point)
     point = PointNew(face,id(mesh_point),mesh_point)
     if state.shape_functions_value !== nothing
-        map_shape_functions!(value,point)
+        map_shape_functions!(Val(:value),point)
     end
     if state.shape_functions_gradient !== nothing
-        map_shape_functions!(gradient,point)
+        map_shape_functions!(Val(:gradient),point)
     end
     if state.shape_functions_jacobian !== nothing
-        map_shape_functions!(jacobian,point)
+        map_shape_functions!(Val(:jacobian),point)
     end
     point
 end
