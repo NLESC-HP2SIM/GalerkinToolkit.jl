@@ -9,6 +9,7 @@ import PartitionedArrays as PA
 import GalerkinToolkit as GT
 using KernelAbstractions
 import KernelAbstractions as KA
+using StaticArrays
 
 const HAS_CUDA = try
     @eval using CUDA
@@ -347,8 +348,130 @@ function cuda_loop_2!(contributions,uh_faces_gpu)
     return nothing
 end
 
-function cuda_loop_5!()
-    #TODO
+function cuda_loop_3!(contributions,uh_faces,dΩ_faces)
+    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if face_id > length(uh_faces)
+        return nothing
+    end
+    s = 0.0
+    dΩ_face = dΩ_faces[face_id]
+    uh_face = uh_faces[dΩ_face]
+    for dΩ_point in GT.each_point_new(dΩ_face)
+        uh_point = uh_face[dΩ_point]
+        ux = GT.field(GT.value,uh_point)
+        dx = GT.weight(dΩ_point)
+        s += ux*dx
+    end
+    contributions[face_id] = s
+    return nothing
+end
+
+function cuda_loop_4_atomic!(b,uh_faces)
+    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if face_id > length(uh_faces)
+        return nothing
+    end
+    uh_face = uh_faces[face_id]
+    dofs = GT.dofs(uh_face)
+    n = GT.num_dofs(uh_face)
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.gradient,uh_point)
+        sx = GT.shape_functions(GT.gradient,uh_point)
+        dx = GT.weight(uh_point)
+        ux_dx = ux*dx
+        for i in 1:n
+            CUDA.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+        end
+    end
+    return nothing
+end
+
+function cuda_loop_4_global!(b,bf_global,uh_faces)
+    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if face_id > length(uh_faces)
+        return nothing
+    end
+    uh_face = uh_faces[face_id]
+    dofs = GT.dofs(uh_face)
+    n = GT.num_dofs(uh_face)
+    bf = view(bf_global, :, face_id)
+    fill!(bf,0)
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.gradient,uh_point)
+        sx = GT.shape_functions(GT.gradient,uh_point)
+        dx = GT.weight(uh_point)
+        ux_dx = ux*dx
+        for i in 1:n
+            bf[i] += ux_dx⋅sx[i]
+        end
+    end
+    for i in 1:n
+        CUDA.@atomic b[dofs[i]] += bf[i]
+    end
+    return nothing
+end
+
+function cuda_loop_4_local!(b,::Val{max_dofs},uh_faces) where {max_dofs}
+    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if face_id > length(uh_faces)
+        return nothing
+    end
+    uh_face = uh_faces[face_id]
+    dofs = GT.dofs(uh_face)
+    n = GT.num_dofs(uh_face)
+    bf = zeros(SVector{max_dofs, Float64})
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.gradient,uh_point)
+        sx = GT.shape_functions(GT.gradient,uh_point)
+        dx = GT.weight(uh_point)
+        ux_dx = ux*dx
+        bf = map(enumerate_static(bf)) do (i, bfi) 
+            bfi + (i <= n ? ux_dx⋅sx[i] : 0)
+        end
+    end
+    for i in 1:n
+        CUDA.@atomic b[dofs[i]] += bf[i]
+    end
+end
+
+function cuda_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
+    bf_shared = CuStaticSharedArray(Float64, (max_dofs,block_dim))
+    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if face_id > length(uh_faces)
+        return nothing
+    end
+    uh_face = uh_faces[face_id]
+    dofs = GT.dofs(uh_face)
+    n = GT.num_dofs(uh_face)
+    bf = view(bf_shared,:,threadIdx().x)
+    fill!(bf, 0)
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.gradient,uh_point)
+        sx = GT.shape_functions(GT.gradient,uh_point)
+        dx = GT.weight(uh_point)
+        ux_dx = ux*dx
+        for i in 1:n
+            bf[i] += ux_dx⋅sx[i]
+        end
+    end
+    for i in 1:n
+        CUDA.@atomic b[dofs[i]] += bf[i]
+    end
+end
+
+function cuda_benchmark(f, name)
+    # Once to warm up
+    result = f()
+    CUDA.synchronize()
+
+    # Perform benchmark
+    times = @benchmark begin
+        $f()
+        CUDA.synchronize()
+    end
+
+    println("performance $(name): $(time(times)/1e9) seconds")
+    return result
 end
 
 function main_gpu(params)
@@ -397,7 +520,10 @@ function main_gpu(params)
     #uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu,workspace_location)
 
     nfaces = length(dΩ_faces_gpu)
+    nmax = GT.max_num_reference_dofs(V)
     contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = CUDA.zeros(Float64, GT.num_free_dofs(V))
+    bf_gpu = CUDA.zeros(Float64, nmax, nfaces)
 
     # Launch kernel 1
     threads_in_block = 256
@@ -448,6 +574,52 @@ function main_gpu(params)
         println("Loop 1: HIP throughput is ", nfaces / time(t1_hip) * 1e9, " faces per second.")
         println("Loop 1: HIP speedup is ", (nfaces / time(t1_hip) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
     end
+
+    # Launch kernel 3
+    threads_in_block = 256
+    blocks_in_grid = ceil(Int, nfaces/256)
+    @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_3!(contributions,uh_faces_gpu,dΩ_faces_gpu)
+    @show r_gpu = sum(contributions)
+
+    # Launch kernel 4
+    result4 = cuda_benchmark("cuda_loop_4_atomic") do
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        fill!(b_gpu, 0)
+        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_atomic!(b_gpu,uh_faces_gpu)
+        sqrt(sum(b_gpu.^2)) # norm is buggy
+    end
+    @show result4
+
+    # Launch kernel 4
+    result4 = cuda_benchmark("cuda_loop_4_global") do
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        fill!(b_gpu, 0)
+        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_global!(b_gpu,bf_gpu,uh_faces_gpu)
+        sqrt(sum(b_gpu.^2)) # norm is buggy
+    end
+    @show result4
+
+    # Launch kernel 4
+    result4 = cuda_benchmark("cuda_loop_4_local!") do
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        fill!(b_gpu, 0)
+        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_local!(b_gpu,Val(nmax),uh_faces_gpu)
+        sqrt(sum(b_gpu.^2)) # norm is buggy
+    end
+    @show result4
+
+    # Launch kernel 4
+    result4 = cuda_benchmark("cuda_loop_4_shared!") do
+        threads_in_block = 256
+        blocks_in_grid = ceil(Int, nfaces/256)
+        fill!(b_gpu, 0)
+        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_shared!(b_gpu,Val(nmax),Val(threads_in_block),uh_faces_gpu)
+        sqrt(sum(b_gpu.^2)) # norm is buggy
+    end
+    @show result4
 end
 
 layouts = (GT.face_minor_array,GT.face_major_array)
