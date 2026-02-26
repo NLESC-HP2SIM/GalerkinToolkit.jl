@@ -635,7 +635,7 @@ function main_gpu(params)
     if is_cuda_available()
         threads_in_block = 256
         blocks_in_grid = ceil(Int, nfaces/256)
-        @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_3!(contributions,uh_faces_gpu,dΩ_faces_gpu)
+        @call_kernel cuda_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
         @show r_gpu = sum(contributions)
     end
 
@@ -645,7 +645,7 @@ function main_gpu(params)
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
             fill!(b_gpu, 0)
-            @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_atomic!(b_gpu,uh_faces_gpu)
+            @call_kernel cuda_loop_4_atomic threads_in_block blocks_in_grid b_gpu uh_faces_gpu
             sqrt(sum(b_gpu.^2)) # norm is buggy
         end
         @show result4
@@ -653,7 +653,7 @@ function main_gpu(params)
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
             fill!(b_gpu, 0)
-            @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_global!(b_gpu,bf_gpu,uh_faces_gpu)
+            @call_kernel cuda_loop_4_global threads_in_block blocks_in_grid b_gpu bf_gpu uh_faces_gpu
             sqrt(sum(b_gpu.^2)) # norm is buggy
         end
         @show result4
@@ -661,7 +661,7 @@ function main_gpu(params)
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
             fill!(b_gpu, 0)
-            @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_local!(b_gpu,Val(nmax),uh_faces_gpu)
+            @call_kernel cuda_loop_4_local threads_in_block blocks_in_grid b_gpu Val(nmax) uh_faces_gpu
             sqrt(sum(b_gpu.^2)) # norm is buggy
         end
         @show result4
@@ -669,7 +669,7 @@ function main_gpu(params)
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
             fill!(b_gpu, 0)
-            @cuda threads=threads_in_block blocks=blocks_in_grid cuda_loop_4_shared!(b_gpu,Val(nmax),Val(threads_in_block),uh_faces_gpu)
+            @call_kernel cuda_loop_4_shared threads_in_block blocks_in_grid b_gpu Val(nmax) Val(threads_in_block) uh_faces_gpu
             sqrt(sum(b_gpu.^2)) # norm is buggy
         end
         @show result4
