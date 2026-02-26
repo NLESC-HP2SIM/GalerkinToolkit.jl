@@ -287,12 +287,12 @@ function main_cpu(params)
 end
 
 if is_cuda_available()
-    function cuda_loop_1!(contributions,dΩ_faces_gpu)
+    function cuda_loop_1!(contributions,dΩ_faces)
         face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-        if face_id > length(dΩ_faces_gpu)
+        if face_id > length(dΩ_faces)
             return nothing
         end
-        dΩ_face = dΩ_faces_gpu[face_id]
+        dΩ_face = dΩ_faces[face_id]
         s = 0.0
         for dΩ_point in GT.each_point_new(dΩ_face)
             x = GT.coordinate(dΩ_point)
@@ -303,12 +303,12 @@ if is_cuda_available()
         return nothing
     end
 
-    function cuda_loop_2!(contributions,uh_faces_gpu)
+    function cuda_loop_2!(contributions,uh_faces)
         face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-        if face_id > length(uh_faces_gpu)
+        if face_id > length(uh_faces)
             return nothing
         end
-        uh_face = uh_faces_gpu[face_id]
+        uh_face = uh_faces[face_id]
         s = 0.0
         for uh_point in GT.each_point_new(uh_face)
             ux = GT.field(GT.value,uh_point)
@@ -430,12 +430,12 @@ if is_cuda_available()
         end
     end
 elseif is_rocm_available()
-    function hip_loop_1!(contributions,dΩ_faces_gpu)
+    function hip_loop_1!(contributions,dΩ_faces)
         face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
-        if face_id > length(dΩ_faces_gpu)
+        if face_id > length(dΩ_faces)
             return nothing
         end
-        dΩ_face = dΩ_faces_gpu[face_id]
+        dΩ_face = dΩ_faces[face_id]
         s = 0.0
         for dΩ_point in GT.each_point_new(dΩ_face)
             x = GT.coordinate(dΩ_point)
@@ -446,12 +446,12 @@ elseif is_rocm_available()
         return nothing
     end
 
-    function hip_loop_2!(contributions,uh_faces_gpu)
+    function hip_loop_2!(contributions,uh_faces)
         face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
-        if face_id > length(uh_faces_gpu)
+        if face_id > length(uh_faces)
             return nothing
         end
-        uh_face = uh_faces_gpu[face_id]
+        uh_face = uh_faces[face_id]
         s = 0.0
         for uh_point in GT.each_point_new(uh_face)
             ux = GT.field(GT.value,uh_point)
@@ -481,10 +481,10 @@ elseif is_rocm_available()
     end
 end
 
-@kernel function gpu_loop_1!(contributions,dΩ_faces_gpu)
+@kernel function gpu_loop_1!(contributions,dΩ_faces)
     face_id = @index(Global)
-    if face_id <= length(dΩ_faces_gpu)
-        dΩ_face = dΩ_faces_gpu[face_id]
+    if face_id <= length(dΩ_faces)
+        dΩ_face = dΩ_faces[face_id]
         s = 0.0
         for dΩ_point in GT.each_point_new(dΩ_face)
             x = GT.coordinate(dΩ_point)
@@ -495,10 +495,10 @@ end
     end
 end
 
-@kernel function gpu_loop_2!(contributions,uh_faces_gpu)
+@kernel function gpu_loop_2!(contributions,uh_faces)
     face_id = @index(Global)
-    if face_id <= length(uh_faces_gpu)
-        uh_face = uh_faces_gpu[face_id]
+    if face_id <= length(uh_faces)
+        uh_face = uh_faces[face_id]
         s = 0.0
         for uh_point in GT.each_point_new(uh_face)
             ux = GT.field(GT.value,uh_point)
@@ -511,7 +511,7 @@ end
 
 @kernel function gpu_loop_3!(contributions,uh_faces,dΩ_faces)
     face_id = @index(Global)
-    if face_id <= uh_faces
+    if face_id <= length(uh_faces)
         s = 0.0
         dΩ_face = dΩ_faces[face_id]
         uh_face = uh_faces[dΩ_face]
@@ -745,10 +745,10 @@ for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
         for face_nodes_layout in layouts
             params = (;face_nodes_layout,face_dofs_layout,k)
             main_cpu(params)
-            main_gpu(params)
-            println()
+            main_gpu(params) 
         end
     end
+    println()
 end
 
 end # module
