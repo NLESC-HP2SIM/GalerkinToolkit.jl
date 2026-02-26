@@ -286,36 +286,181 @@ function main_cpu(params)
 
 end
 
-function cuda_loop_1!(contributions,dΩ_faces_gpu)
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(dΩ_faces_gpu)
+if is_cuda_available()
+    function cuda_loop_1!(contributions,dΩ_faces_gpu)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(dΩ_faces_gpu)
+            return nothing
+        end
+        dΩ_face = dΩ_faces_gpu[face_id]
+        s = 0.0
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            x = GT.coordinate(dΩ_point)
+            dx = GT.weight(dΩ_point)
+            s += f(x)*dx
+        end
+        contributions[face_id] = s
         return nothing
     end
-    dΩ_face = dΩ_faces_gpu[face_id]
-    s = 0.0
-    for dΩ_point in GT.each_point_new(dΩ_face)
-        x = GT.coordinate(dΩ_point)
-        dx = GT.weight(dΩ_point)
-        s += f(x)*dx
-    end
-    contributions[face_id] = s
-    return nothing
-end
 
-function hip_loop_1!(contributions,dΩ_faces_gpu)
-    face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
-    if face_id > length(dΩ_faces_gpu)
+    function cuda_loop_2!(contributions,uh_faces_gpu)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces_gpu)
+            return nothing
+        end
+        uh_face = uh_faces_gpu[face_id]
+        s = 0.0
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(uh_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
         return nothing
     end
-    dΩ_face = dΩ_faces_gpu[face_id]
-    s = 0.0
-    for dΩ_point in GT.each_point_new(dΩ_face)
-        x = GT.coordinate(dΩ_point)
-        dx = GT.weight(dΩ_point)
-        s += f(x)*dx
+
+    function cuda_loop_3!(contributions,uh_faces,dΩ_faces)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        s = 0.0
+        dΩ_face = dΩ_faces[face_id]
+        uh_face = uh_faces[dΩ_face]
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(dΩ_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
+        return nothing
     end
-    contributions[face_id] = s
-    return nothing
+
+    function cuda_loop_4_atomic!(b,uh_faces)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                CUDA.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+            end
+        end
+        return nothing
+    end
+
+    function cuda_loop_4_global!(b,bf_global,uh_faces)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            CUDA.@atomic b[dofs[i]] += bf[i]
+        end
+        return nothing
+    end
+
+    function cuda_loop_4_local!(b,::Val{max_dofs},uh_faces) where {max_dofs}
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = zeros(SVector{max_dofs, Float64})
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            bf = map(enumerate_static(bf)) do (i, bfi) 
+                bfi + (i <= n ? ux_dx⋅sx[i] : 0)
+            end
+        end
+        for i in 1:n
+            CUDA.@atomic b[dofs[i]] += bf[i]
+        end
+    end
+
+    function cuda_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
+        bf_shared = CuStaticSharedArray(Float64, (max_dofs,block_dim))
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_shared,:,threadIdx().x)
+        fill!(bf, 0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            CUDA.@atomic b[dofs[i]] += bf[i]
+        end
+    end
+elseif is_rocm_available()
+    function hip_loop_1!(contributions,dΩ_faces_gpu)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(dΩ_faces_gpu)
+            return nothing
+        end
+        dΩ_face = dΩ_faces_gpu[face_id]
+        s = 0.0
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            x = GT.coordinate(dΩ_point)
+            dx = GT.weight(dΩ_point)
+            s += f(x)*dx
+        end
+        contributions[face_id] = s
+        return nothing
+    end
+
+    function hip_loop_2!(contributions,uh_faces_gpu)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(uh_faces_gpu)
+            return nothing
+        end
+        uh_face = uh_faces_gpu[face_id]
+        s = 0.0
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(uh_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
+        return nothing
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces_gpu)
@@ -332,38 +477,6 @@ end
     end
 end
 
-function cuda_loop_2!(contributions,uh_faces_gpu)
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces_gpu)
-        return nothing
-    end
-    uh_face = uh_faces_gpu[face_id]
-    s = 0.0
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.value,uh_point)
-        dx = GT.weight(uh_point)
-        s += ux*dx
-    end
-    contributions[face_id] = s
-    return nothing
-end
-
-function hip_loop_2!(contributions,uh_faces_gpu)
-    face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
-    if face_id > length(uh_faces_gpu)
-        return nothing
-    end
-    uh_face = uh_faces_gpu[face_id]
-    s = 0.0
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.value,uh_point)
-        dx = GT.weight(uh_point)
-        s += ux*dx
-    end
-    contributions[face_id] = s
-    return nothing
-end
-
 @kernel function gpu_loop_2!(contributions,uh_faces_gpu)
     face_id = @index(Global)
     if face_id <= length(uh_faces_gpu)
@@ -378,130 +491,21 @@ end
     end
 end
 
-function cuda_loop_3!(contributions,uh_faces,dΩ_faces)
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces)
-        return nothing
-    end
-    s = 0.0
-    dΩ_face = dΩ_faces[face_id]
-    uh_face = uh_faces[dΩ_face]
-    for dΩ_point in GT.each_point_new(dΩ_face)
-        uh_point = uh_face[dΩ_point]
-        ux = GT.field(GT.value,uh_point)
-        dx = GT.weight(dΩ_point)
-        s += ux*dx
-    end
-    contributions[face_id] = s
-    return nothing
-end
-
-function cuda_loop_4_atomic!(b,uh_faces)
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces)
-        return nothing
-    end
-    uh_face = uh_faces[face_id]
-    dofs = GT.dofs(uh_face)
-    n = GT.num_dofs(uh_face)
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.gradient,uh_point)
-        sx = GT.shape_functions(GT.gradient,uh_point)
-        dx = GT.weight(uh_point)
-        ux_dx = ux*dx
-        for i in 1:n
-            CUDA.@atomic b[dofs[i]] += ux_dx⋅sx[i]
-        end
-    end
-    return nothing
-end
-
-function cuda_loop_4_global!(b,bf_global,uh_faces)
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces)
-        return nothing
-    end
-    uh_face = uh_faces[face_id]
-    dofs = GT.dofs(uh_face)
-    n = GT.num_dofs(uh_face)
-    bf = view(bf_global, :, face_id)
-    fill!(bf,0)
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.gradient,uh_point)
-        sx = GT.shape_functions(GT.gradient,uh_point)
-        dx = GT.weight(uh_point)
-        ux_dx = ux*dx
-        for i in 1:n
-            bf[i] += ux_dx⋅sx[i]
-        end
-    end
-    for i in 1:n
-        CUDA.@atomic b[dofs[i]] += bf[i]
-    end
-    return nothing
-end
-
-function cuda_loop_4_local!(b,::Val{max_dofs},uh_faces) where {max_dofs}
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces)
-        return nothing
-    end
-    uh_face = uh_faces[face_id]
-    dofs = GT.dofs(uh_face)
-    n = GT.num_dofs(uh_face)
-    bf = zeros(SVector{max_dofs, Float64})
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.gradient,uh_point)
-        sx = GT.shape_functions(GT.gradient,uh_point)
-        dx = GT.weight(uh_point)
-        ux_dx = ux*dx
-        bf = map(enumerate_static(bf)) do (i, bfi) 
-            bfi + (i <= n ? ux_dx⋅sx[i] : 0)
-        end
-    end
-    for i in 1:n
-        CUDA.@atomic b[dofs[i]] += bf[i]
-    end
-end
-
-function cuda_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
-    bf_shared = CuStaticSharedArray(Float64, (max_dofs,block_dim))
-    face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if face_id > length(uh_faces)
-        return nothing
-    end
-    uh_face = uh_faces[face_id]
-    dofs = GT.dofs(uh_face)
-    n = GT.num_dofs(uh_face)
-    bf = view(bf_shared,:,threadIdx().x)
-    fill!(bf, 0)
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.gradient,uh_point)
-        sx = GT.shape_functions(GT.gradient,uh_point)
-        dx = GT.weight(uh_point)
-        ux_dx = ux*dx
-        for i in 1:n
-            bf[i] += ux_dx⋅sx[i]
-        end
-    end
-    for i in 1:n
-        CUDA.@atomic b[dofs[i]] += bf[i]
-    end
-end
-
-function cuda_benchmark(f, name)
-    # Once to warm up
-    result = f()
-    CUDA.synchronize()
-
-    # Perform benchmark
-    times = @benchmark begin
-        $f()
+if is_cuda_available()
+    function cuda_benchmark(f, name)
+        # Once to warm up
+        result = f()
         CUDA.synchronize()
-    end
 
-    println("performance $(name): $(time(times)/1e9) seconds")
-    return result
+        # Perform benchmark
+        times = @benchmark begin
+            $f()
+            CUDA.synchronize()
+        end
+
+        println("performance $(name): $(time(times)/1e9) seconds")
+        return result
+    end
 end
 
 function main_gpu(params)
