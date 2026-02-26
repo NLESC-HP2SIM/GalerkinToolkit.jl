@@ -556,8 +556,8 @@ function main_gpu(params)
     nfaces = length(dΩ_faces_gpu)
     nmax = GT.max_num_reference_dofs(V)
     contributions = KA.zeros(dev, Float64, nfaces)
-    b_gpu = CUDA.zeros(Float64, GT.num_free_dofs(V))
-    bf_gpu = CUDA.zeros(Float64, nmax, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 1
     threads_in_block = 256
@@ -677,6 +677,7 @@ function main_gpu(params)
 end
 
 for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
+    println("k = ", k)
     layouts = (GT.face_minor_array,GT.face_major_array)
     for face_dofs_layout in layouts
         for face_nodes_layout in layouts
