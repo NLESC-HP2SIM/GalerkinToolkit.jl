@@ -744,10 +744,10 @@ function main_gpu(params)
     threads_in_block = 256
     t4_gpu = @benchmark begin
         gpu_loop_4_atomic!($dev, $threads_in_block)($b_gpu, $uh_faces_gpu, ndrange=$nfaces)
-        sum($contributions)
+        sqrt(sum($b_gpu.^2))
         KA.synchronize($dev)
-    end
-    @show sum(contributions)
+    end setup=(fill!($b_gpu, 0.0))
+    @show sqrt(sum($b_gpu.^2))
     if is_cuda_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
@@ -755,7 +755,7 @@ function main_gpu(params)
             @call_kernel cuda_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             CUDA.synchronize()
-        end
+        end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum($b_gpu.^2))
     elseif is_rocm_available()
         threads_in_block = 256
@@ -764,7 +764,7 @@ function main_gpu(params)
             @call_kernel hip_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             AMDGPU.synchronize()
-        end
+        end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum($b_gpu.^2))
     end
     println("Loop 4 (atomic): KernelAbstractions throughput is ", nfaces / time(t4_gpu) * 1e9, " faces per second.")
