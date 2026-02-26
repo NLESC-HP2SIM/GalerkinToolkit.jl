@@ -212,11 +212,11 @@ function cpu_loop_6_numeric!(AV,Af,V_faces)
 end
 
 function main_cpu(params)
-    (;face_nodes_layout,face_dofs_layout) = params
+    (;face_nodes_layout,face_dofs_layout,k) = params
 
     # Start at CPU
     domain = (0,1,0,1)
-    cells = (4,4)
+    cells = (k,k)
     mesh = GT.cartesian_mesh(domain,cells)
     Ω = GT.interior(mesh)
     degree = 4
@@ -348,6 +348,36 @@ function cuda_loop_2!(contributions,uh_faces_gpu)
     return nothing
 end
 
+function hip_loop_2!(contributions,uh_faces_gpu)
+    face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+    if face_id > length(uh_faces_gpu)
+        return nothing
+    end
+    uh_face = uh_faces_gpu[face_id]
+    s = 0.0
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.value,uh_point)
+        dx = GT.weight(uh_point)
+        s += ux*dx
+    end
+    contributions[face_id] = s
+    return nothing
+end
+
+@kernel function gpu_loop_2!(contributions,uh_faces_gpu)
+    face_id = @index(Global)
+    if face_id <= length(uh_faces_gpu)
+        uh_face = uh_faces_gpu[face_id]
+        s = 0.0
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(uh_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
+    end
+end
+
 function cuda_loop_3!(contributions,uh_faces,dΩ_faces)
     face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if face_id > length(uh_faces)
@@ -475,11 +505,11 @@ function cuda_benchmark(f, name)
 end
 
 function main_gpu(params)
-    (;face_nodes_layout,face_dofs_layout) = params
+    (;face_nodes_layout,face_dofs_layout,k) = params
 
     # Start at CPU
     domain = (0,1,0,1)
-    cells = (4,4)
+    cells = (k,k)
     mesh = GT.cartesian_mesh(domain,cells)
     Ω = GT.interior(mesh)
     degree = 4
@@ -533,9 +563,7 @@ function main_gpu(params)
         KA.synchronize($dev)
     end
     @show sum(contributions)
-
     if is_cuda_available()
-        # Launch kernel 1
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_cuda = @benchmark begin
@@ -543,18 +571,8 @@ function main_gpu(params)
             sum($contributions)
             CUDA.synchronize()
         end
-        @show sum(contributions)  
-        # Launch kernel 2
-        # threads_in_block = 256
-        # blocks_in_grid = cld(nfaces, threads_in_block)
-        # t2_cuda = @benchmark begin
-        #     @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
-        #     sum($contributions)
-        #     CUDA.synchronize()
-        # end
-        # @show sum(contributions)
+        @show sum(contributions)
     elseif is_rocm_available()
-        # Launch kernel 1
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_hip = @benchmark begin
@@ -564,15 +582,49 @@ function main_gpu(params)
         end
         @show sum(contributions)
     end
-
     println("Loop 1: KernelAbstractions throughput is ", nfaces / time(t1_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 1: CUDA throughput is ", nfaces / time(t1_cuda) * 1e9, " faces per second.")
         println("Loop 1: CUDA speedup is ", (nfaces / time(t1_cuda) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
-        # println("Loop 2: CUDA throughput is ", nfaces / time(t2_cuda) * 1e9, " faces per second.")
     elseif is_rocm_available()
         println("Loop 1: HIP throughput is ", nfaces / time(t1_hip) * 1e9, " faces per second.")
         println("Loop 1: HIP speedup is ", (nfaces / time(t1_hip) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
+    end
+
+    # Launch kernel 2
+    threads_in_block = 256
+    t2_gpu = @benchmark begin
+        gpu_loop_2!($dev, $threads_in_block)($contributions, $uh_faces_gpu, ndrange=$nfaces)
+        sum($contributions)
+        KA.synchronize($dev)
+    end
+    @show sum(contributions)
+    if is_cuda_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t2_cuda = @benchmark begin
+            @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
+            sum($contributions)
+            CUDA.synchronize()
+        end
+        @show sum(contributions)
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t2_hip = @benchmark begin
+            @call_kernel hip_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
+            sum($contributions)
+            AMDGPU.synchronize()
+        end
+        @show sum(contributions)
+    end
+    println("Loop 2: KernelAbstractions throughput is ", nfaces / time(t2_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 2: CUDA throughput is ", nfaces / time(t2_cuda) * 1e9, " faces per second.")
+        println("Loop 2: CUDA speedup is ", (nfaces / time(t2_cuda) * 1e9) / (nfaces / time(t2_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 2: HIP throughput is ", nfaces / time(t2_hip) * 1e9, " faces per second.")
+        println("Loop 2: HIP speedup is ", (nfaces / time(t2_hip) * 1e9) / (nfaces / time(t2_gpu) * 1e9))
     end
 
     # Launch kernel 3
@@ -622,13 +674,15 @@ function main_gpu(params)
     @show result4
 end
 
-layouts = (GT.face_minor_array,GT.face_major_array)
-for face_dofs_layout in layouts
-    for face_nodes_layout in layouts
-        params = (;face_nodes_layout,face_dofs_layout)
-        main_cpu(params)
-        main_gpu(params)
-        println()
+for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
+    layouts = (GT.face_minor_array,GT.face_major_array)
+    for face_dofs_layout in layouts
+        for face_nodes_layout in layouts
+            params = (;face_nodes_layout,face_dofs_layout,k)
+            main_cpu(params)
+            main_gpu(params)
+            println()
+        end
     end
 end
 
