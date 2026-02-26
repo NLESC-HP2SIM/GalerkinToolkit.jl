@@ -5,6 +5,7 @@ using LinearAlgebra
 using SparseArrays
 using Adapt
 using BenchmarkTools
+import Atomix
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
 using KernelAbstractions
@@ -479,6 +480,26 @@ elseif is_rocm_available()
         contributions[face_id] = s
         return nothing
     end
+
+    function hip_loop_4_atomic!(b,uh_faces)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+            end
+        end
+        return nothing
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces)
@@ -522,6 +543,23 @@ end
             s += ux*dx
         end
         contributions[face_id] = s
+    end
+end
+
+@kernel function gpu_loop_4_atomic!(b,uh_faces)
+    face_id = @index(Global)
+    if face_id <= length(uh_faces)
+    uh_face = uh_faces[face_id]
+    dofs = GT.dofs(uh_face)
+    n = GT.num_dofs(uh_face)
+    for uh_point in GT.each_point_new(uh_face)
+        ux = GT.field(GT.gradient,uh_point)
+        sx = GT.shape_functions(GT.gradient,uh_point)
+        dx = GT.weight(uh_point)
+        ux_dx = ux*dx
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+        end
     end
 end
 
@@ -702,15 +740,42 @@ function main_gpu(params)
     end
 
     # Launch kernel 4
+    threads_in_block = 256
+    t4_gpu = @benchmark begin
+        gpu_loop_4_atomic!($dev, $threads_in_block)($b_gpu, $uh_faces_gpu, ndrange=$nfaces)
+        sum($contributions)
+        KA.synchronize($dev)
+    end
+    @show sum(contributions)
     if is_cuda_available()
-        result4 = cuda_benchmark("cuda_loop_4_atomic") do
-            threads_in_block = 256
-            blocks_in_grid = ceil(Int, nfaces/256)
-            fill!(b_gpu, 0)
-            @call_kernel cuda_loop_4_atomic threads_in_block blocks_in_grid b_gpu uh_faces_gpu
-            sqrt(sum(b_gpu.^2)) # norm is buggy
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_cuda = @benchmark begin
+            @call_kernel cuda_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            CUDA.synchronize()
         end
-        @show result4
+        @show sqrt(sum($b_gpu.^2))
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_hip = @benchmark begin
+            @call_kernel hip_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            AMDGPU.synchronize()
+        end
+        @show sqrt(sum($b_gpu.^2))
+    end
+    println("Loop 4 (atomic): KernelAbstractions throughput is ", nfaces / time(t4_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 4 (atomic): CUDA throughput is ", nfaces / time(t4_cuda) * 1e9, " faces per second.")
+        println("Loop 4 (atomic): CUDA speedup is ", (nfaces / time(t4_cuda) * 1e9) / (nfaces / time(t4_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 4 (atomic): HIP throughput is ", nfaces / time(t4_hip) * 1e9, " faces per second.")
+        println("Loop 4 (atomic): HIP speedup is ", (nfaces / time(t4_hip) * 1e9) / (nfaces / time(t4_gpu) * 1e9))
+    end
+
+    if is_cuda_available()    
         result4 = cuda_benchmark("cuda_loop_4_global") do
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
