@@ -461,6 +461,24 @@ elseif is_rocm_available()
         contributions[face_id] = s
         return nothing
     end
+
+    function hip_loop_3!(contributions,uh_faces,dΩ_faces)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        s = 0.0
+        dΩ_face = dΩ_faces[face_id]
+        uh_face = uh_faces[dΩ_face]
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(dΩ_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
+        return nothing
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces_gpu)
@@ -485,6 +503,22 @@ end
         for uh_point in GT.each_point_new(uh_face)
             ux = GT.field(GT.value,uh_point)
             dx = GT.weight(uh_point)
+            s += ux*dx
+        end
+        contributions[face_id] = s
+    end
+end
+
+@kernel function gpu_loop_3!(contributions,uh_faces,dΩ_faces)
+    face_id = @index(Global)
+    if face_id <= uh_faces
+        s = 0.0
+        dΩ_face = dΩ_faces[face_id]
+        uh_face = uh_faces[dΩ_face]
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.value,uh_point)
+            dx = GT.weight(dΩ_point)
             s += ux*dx
         end
         contributions[face_id] = s
@@ -632,11 +666,39 @@ function main_gpu(params)
     end
 
     # Launch kernel 3
+    threads_in_block = 256
+    t3_gpu = @benchmark begin
+        gpu_loop_3!($dev, $threads_in_block)($contributions, $uh_faces_gpu, $dΩ_faces_gpu, ndrange=$nfaces)
+        sum($contributions)
+        KA.synchronize($dev)
+    end
+    @show sum(contributions)
     if is_cuda_available()
         threads_in_block = 256
-        blocks_in_grid = ceil(Int, nfaces/256)
-        @call_kernel cuda_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
-        @show r_gpu = sum(contributions)
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t3_cuda = @benchmark begin
+            @call_kernel cuda_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
+            sum($contributions)
+            CUDA.synchronize()
+        end
+        @show sum(contributions)
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t3_hip = @benchmark begin
+            @call_kernel hip_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
+            sum($contributions)
+            AMDGPU.synchronize()
+        end
+        @show sum(contributions)
+    end
+    println("Loop 3: KernelAbstractions throughput is ", nfaces / time(t3_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 3: CUDA throughput is ", nfaces / time(t3_cuda) * 1e9, " faces per second.")
+        println("Loop 3: CUDA speedup is ", (nfaces / time(t3_cuda) * 1e9) / (nfaces / time(t3_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 3: HIP throughput is ", nfaces / time(t3_hip) * 1e9, " faces per second.")
+        println("Loop 3: HIP speedup is ", (nfaces / time(t3_hip) * 1e9) / (nfaces / time(t3_gpu) * 1e9))
     end
 
     # Launch kernel 4
