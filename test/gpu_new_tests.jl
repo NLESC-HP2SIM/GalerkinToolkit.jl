@@ -351,7 +351,7 @@ if is_cuda_available()
             dx = GT.weight(uh_point)
             ux_dx = ux*dx
             for i in 1:n
-                CUDA.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+                CUDA.atomic_add(b[dofs[i]], ux_dx⋅sx[i])
             end
         end
         return nothing
@@ -377,7 +377,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.@atomic b[dofs[i]] += bf[i]
+            CUDA.atomic_add(b[dofs[i]], bf[i])
         end
         return nothing
     end
@@ -401,7 +401,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.@atomic b[dofs[i]] += bf[i]
+            CUDA.atomic_add(b[dofs[i]], bf[i])
         end
     end
 
@@ -426,7 +426,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.@atomic b[dofs[i]] += bf[i]
+            CUDA.atomic_add(b[dofs[i]], bf[i])
         end
     end
 elseif is_rocm_available()
