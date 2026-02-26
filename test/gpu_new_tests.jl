@@ -352,7 +352,7 @@ if is_cuda_available()
             dx = GT.weight(uh_point)
             ux_dx = ux*dx
             for i in 1:n
-                CUDA.atomic_add(b[dofs[i]], ux_dx⋅sx[i])
+                Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
             end
         end
         return nothing
