@@ -549,16 +549,17 @@ end
 @kernel function gpu_loop_4_atomic!(b,uh_faces)
     face_id = @index(Global)
     if face_id <= length(uh_faces)
-    uh_face = uh_faces[face_id]
-    dofs = GT.dofs(uh_face)
-    n = GT.num_dofs(uh_face)
-    for uh_point in GT.each_point_new(uh_face)
-        ux = GT.field(GT.gradient,uh_point)
-        sx = GT.shape_functions(GT.gradient,uh_point)
-        dx = GT.weight(uh_point)
-        ux_dx = ux*dx
-        for i in 1:n
-            Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
+            end
         end
     end
 end
