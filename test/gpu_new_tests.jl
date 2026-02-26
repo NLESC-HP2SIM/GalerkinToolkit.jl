@@ -677,7 +677,7 @@ function main_gpu(params)
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t3_cuda = @benchmark begin
-            @call_kernel cuda_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
+            @call_kernel cuda_loop_3 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu $dΩ_faces_gpu
             sum($contributions)
             CUDA.synchronize()
         end
@@ -686,7 +686,7 @@ function main_gpu(params)
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t3_hip = @benchmark begin
-            @call_kernel hip_loop_3 threads_in_block blocks_in_grid contributions uh_faces_gpu dΩ_faces_gpu
+            @call_kernel hip_loop_3 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu $dΩ_faces_gpu
             sum($contributions)
             AMDGPU.synchronize()
         end
