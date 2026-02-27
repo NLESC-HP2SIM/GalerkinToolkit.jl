@@ -363,7 +363,7 @@ if is_cuda_available()
         if face_id > length(uh_faces)
             return nothing
         end
-        uh_face = uh_faces[face_id]
+        uh_face = uh_faces[face_id] # Eventually calls at_mesh_face
         dofs = GT.dofs(uh_face)
         n = GT.num_dofs(uh_face)
         bf = view(bf_global, :, face_id)
@@ -378,7 +378,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.atomic_add(b[dofs[i]], bf[i])
+            Atomix.@atomic b[dofs[i]] += bf[i]
         end
         return nothing
     end
@@ -402,7 +402,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.atomic_add(b[dofs[i]], bf[i])
+            Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
 
@@ -427,7 +427,7 @@ if is_cuda_available()
             end
         end
         for i in 1:n
-            CUDA.atomic_add(b[dofs[i]], bf[i])
+            Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
 elseif is_rocm_available()
