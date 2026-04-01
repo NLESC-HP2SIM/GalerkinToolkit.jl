@@ -548,6 +548,31 @@ elseif is_rocm_available()
             Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
+
+    function hip_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
+        bf_shared = ROCStaticLocalArray(Float64, (max_dofs,block_dim))
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_shared,:,workitemIdx().x)
+        fill!(bf, 0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces)
@@ -657,20 +682,27 @@ end
     end
 end
 
-if is_cuda_available()
-    function cuda_benchmark(f, name)
-        # Once to warm up
-        result = f()
-        CUDA.synchronize()
-
-        # Perform benchmark
-        times = @benchmark begin
-            $f()
-            CUDA.synchronize()
+@kernel function gpu_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
+    bf_shared = @localmem Float64 (max_dofs,block_dim)
+    face_id = @index(Global)
+    if face_id <= length(uh_faces)
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_shared,:,workitemIdx().x)
+        fill!(bf, 0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
         end
-
-        println("performance $(name): $(time(times)/1e9) seconds")
-        return result
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
     end
 end
 
@@ -941,15 +973,40 @@ function main_gpu(params)
         println("Loop 4 (local): HIP speedup is ", (nfaces / time(t4_local_hip) * 1e9) / (nfaces / time(t4_local_gpu) * 1e9))
     end
 
+    # Launch kernel 4 shared
+    threads_in_block = 256
+    t4_shared_gpu = @benchmark begin
+        gpu_loop_4_shared!($dev, $threads_in_block)($b_gpu, Val($nmax), Val($threads_in_block), $uh_faces_gpu, ndrange=$nfaces)
+        sqrt(sum($b_gpu.^2))
+        KA.synchronize($dev)
+    end setup=(fill!($b_gpu, 0.0))
+    @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        result4 = cuda_benchmark("cuda_loop_4_shared!") do
-            threads_in_block = 256
-            blocks_in_grid = ceil(Int, nfaces/256)
-            fill!(b_gpu, 0)
-            @call_kernel cuda_loop_4_shared threads_in_block blocks_in_grid b_gpu Val(nmax) Val(threads_in_block) uh_faces_gpu
-            sqrt(sum(b_gpu.^2)) # norm is buggy
-        end
-        @show result4
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_shared_cuda = @benchmark begin
+            @call_kernel cuda_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            CUDA.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_shared_hip = @benchmark begin
+            @call_kernel hip_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            AMDGPU.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    end
+    println("Loop 4 (shared): KernelAbstractions throughput is ", nfaces / time(t4_shared_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 4 (shared): CUDA throughput is ", nfaces / time(t4_shared_cuda) * 1e9, " faces per second.")
+        println("Loop 4 (shared): CUDA speedup is ", (nfaces / time(t4_shared_cuda) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 4 (shared): HIP throughput is ", nfaces / time(t4_shared_hip) * 1e9, " faces per second.")
+        println("Loop 4 (shared): HIP speedup is ", (nfaces / time(t4_shared_hip) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
     end
 end
 
