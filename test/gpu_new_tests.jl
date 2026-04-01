@@ -550,7 +550,7 @@ elseif is_rocm_available()
     end
 
     function hip_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
-        bf_shared = ROCStaticLocalArray(Float64, (max_dofs,block_dim))
+        bf_shared = @ROCStaticLocalArray(Float64, (max_dofs,block_dim))
         face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
         if face_id > length(uh_faces)
             return nothing
