@@ -881,7 +881,7 @@ function main_gpu(params)
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_global_cuda = @benchmark begin
-            @call_kernel @call_kernel cuda_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
+            @call_kernel cuda_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             CUDA.synchronize()
         end setup=(fill!($b_gpu, 0.0))
