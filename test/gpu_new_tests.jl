@@ -500,6 +500,31 @@ elseif is_rocm_available()
         end
         return nothing
     end
+
+    function hip_loop_4_global!(b,bf_global,uh_faces)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(uh_faces)
+            return nothing
+        end
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
+        return nothing
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces)
@@ -560,6 +585,29 @@ end
             for i in 1:n
                 Atomix.@atomic b[dofs[i]] += ux_dx⋅sx[i]
             end
+        end
+    end
+end
+
+@kernel function gpu_loop_4_global!(b,bf_global,uh_faces)
+    face_id = @index(Global)
+    if face_id <= length(uh_faces)
+        uh_face = uh_faces[face_id]
+        dofs = GT.dofs(uh_face)
+        n = GT.num_dofs(uh_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for uh_point in GT.each_point_new(uh_face)
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,uh_point)
+            dx = GT.weight(uh_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
 end
@@ -740,9 +788,9 @@ function main_gpu(params)
         println("Loop 3: HIP speedup is ", (nfaces / time(t3_hip) * 1e9) / (nfaces / time(t3_gpu) * 1e9))
     end
 
-    # Launch kernel 4
+    # Launch kernel 4 atomic
     threads_in_block = 256
-    t4_gpu = @benchmark begin
+    t4_atomic_gpu = @benchmark begin
         gpu_loop_4_atomic!($dev, $threads_in_block)($b_gpu, $uh_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
         KA.synchronize($dev)
@@ -751,7 +799,7 @@ function main_gpu(params)
     if is_cuda_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
-        t4_cuda = @benchmark begin
+        t4_atomic_cuda = @benchmark begin
             @call_kernel cuda_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             CUDA.synchronize()
@@ -760,31 +808,59 @@ function main_gpu(params)
     elseif is_rocm_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
-        t4_hip = @benchmark begin
+        t4_atomic_hip = @benchmark begin
             @call_kernel hip_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             AMDGPU.synchronize()
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     end
-    println("Loop 4 (atomic): KernelAbstractions throughput is ", nfaces / time(t4_gpu) * 1e9, " faces per second.")
+    println("Loop 4 (atomic): KernelAbstractions throughput is ", nfaces / time(t4_atomic_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
-        println("Loop 4 (atomic): CUDA throughput is ", nfaces / time(t4_cuda) * 1e9, " faces per second.")
-        println("Loop 4 (atomic): CUDA speedup is ", (nfaces / time(t4_cuda) * 1e9) / (nfaces / time(t4_gpu) * 1e9))
+        println("Loop 4 (atomic): CUDA throughput is ", nfaces / time(t4_atomic_cuda) * 1e9, " faces per second.")
+        println("Loop 4 (atomic): CUDA speedup is ", (nfaces / time(t4_atomic_cuda) * 1e9) / (nfaces / time(t4_atomic_gpu) * 1e9))
     elseif is_rocm_available()
-        println("Loop 4 (atomic): HIP throughput is ", nfaces / time(t4_hip) * 1e9, " faces per second.")
-        println("Loop 4 (atomic): HIP speedup is ", (nfaces / time(t4_hip) * 1e9) / (nfaces / time(t4_gpu) * 1e9))
+        println("Loop 4 (atomic): HIP throughput is ", nfaces / time(t4_atomic_hip) * 1e9, " faces per second.")
+        println("Loop 4 (atomic): HIP speedup is ", (nfaces / time(t4_atomic_hip) * 1e9) / (nfaces / time(t4_atomic_gpu) * 1e9))
     end
 
-    if is_cuda_available()    
-        result4 = cuda_benchmark("cuda_loop_4_global") do
-            threads_in_block = 256
-            blocks_in_grid = ceil(Int, nfaces/256)
-            fill!(b_gpu, 0)
-            @call_kernel cuda_loop_4_global threads_in_block blocks_in_grid b_gpu bf_gpu uh_faces_gpu
-            sqrt(sum(b_gpu.^2)) # norm is buggy
-        end
-        @show result4
+    # Launch kernel 4 global
+    threads_in_block = 256
+    t4_global_gpu = @benchmark begin
+        gpu_loop_4_global!($dev, $threads_in_block)($b_gpu $bf_gpu $uh_faces_gpu, ndrange=$nfaces)
+        sqrt(sum($b_gpu.^2))
+        KA.synchronize($dev)
+    end setup=(fill!($b_gpu, 0.0))
+    @show sqrt(sum(b_gpu.^2))
+    if is_cuda_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_global_cuda = @benchmark begin
+            @call_kernel @call_kernel cuda_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            CUDA.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t4_global_hip = @benchmark begin
+            @call_kernel hip_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            AMDGPU.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    end
+    println("Loop 4 (global): KernelAbstractions throughput is ", nfaces / time(t4_global_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 4 (global): CUDA throughput is ", nfaces / time(t4_global_cuda) * 1e9, " faces per second.")
+        println("Loop 4 (global): CUDA speedup is ", (nfaces / time(t4_global_cuda) * 1e9) / (nfaces / time(t4_global_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 4 (global): HIP throughput is ", nfaces / time(t4_global_hip) * 1e9, " faces per second.")
+        println("Loop 4 (global): HIP speedup is ", (nfaces / time(t4_global_hip) * 1e9) / (nfaces / time(t4_global_gpu) * 1e9))
+    end
+
+    if is_cuda_available()
         result4 = cuda_benchmark("cuda_loop_4_local!") do
             threads_in_block = 256
             blocks_in_grid = ceil(Int, nfaces/256)
