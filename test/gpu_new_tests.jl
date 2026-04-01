@@ -689,7 +689,7 @@ end
         uh_face = uh_faces[face_id]
         dofs = GT.dofs(uh_face)
         n = GT.num_dofs(uh_face)
-        bf = view(bf_shared,:,workitemIdx().x)
+        bf = view(bf_shared,:,@index(Local))
         fill!(bf, 0)
         for uh_point in GT.each_point_new(uh_face)
             ux = GT.field(GT.gradient,uh_point)
