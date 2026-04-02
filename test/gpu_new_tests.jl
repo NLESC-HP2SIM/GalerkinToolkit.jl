@@ -56,6 +56,10 @@ if is_cuda_available()
         return esc(ex)
     end
 elseif is_rocm_available()
+    macro alloc_shared_dyn(T, dims...)
+        ex = :( AMDGPU.@ROCDynamicLocalArray($T, $dims) )
+        return esc(ex)
+    end
     macro call_kernel(name, threads, blocks, args...)
         func_name = name isa Symbol ? Symbol(name, :!) : name
         ex = :( AMDGPU.@roc groupsize=$threads gridsize=$blocks $func_name($(args...)) )
@@ -67,6 +71,9 @@ elseif is_rocm_available()
         return esc(ex)
     end
 else
+    macro alloc_shared_dyn(T, dims...)
+        error("No GPU backend available to compile @alloc_shared_dyn")
+    end
     macro call_kernel(args...)
         error("No GPU backend available to compile @call_kernel")
     end
@@ -587,7 +594,7 @@ elseif is_rocm_available()
         if face_id > length(uh_faces)
             return nothing
         end
-        bf_shared = @ROCDynamicLocalArray(Float64, (max_dofs,block_dim))
+        bf_shared = @alloc_shared_dyn Float64 (max_dofs,block_dim)
         uh_face = uh_faces[face_id]
         dofs = GT.dofs(uh_face)
         n = GT.num_dofs(uh_face)
