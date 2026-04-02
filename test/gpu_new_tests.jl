@@ -61,6 +61,11 @@ elseif is_rocm_available()
         ex = :( AMDGPU.@roc groupsize=$threads gridsize=$blocks $func_name($(args...)) )
         return esc(ex)
     end
+    macro call_kernel_shmem(name, threads, blocks, shmem, args...)
+        func_name = name isa Symbol ? Symbol(name, :!) : name
+        ex = :( AMDGPU.@roc groupsize=$threads gridsize=$blocks shmem=$shmem $func_name($(args...)) )
+        return esc(ex)
+    end
 else
     macro call_kernel(args...)
         error("No GPU backend available to compile @call_kernel")
@@ -550,11 +555,11 @@ elseif is_rocm_available()
     end
 
     function hip_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
-        bf_shared = AMDGPU.@ROCStaticLocalArray(Float64, (max_dofs,block_dim))
         face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
         if face_id > length(uh_faces)
             return nothing
         end
+        bf_shared = AMDGPU.@ROCDynamicLocalArray(Float64, (max_dofs,block_dim))
         uh_face = uh_faces[face_id]
         dofs = GT.dofs(uh_face)
         n = GT.num_dofs(uh_face)
@@ -992,8 +997,9 @@ function main_gpu(params)
     elseif is_rocm_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
+        shmem = sizeof(Float64) * nmax * threads_in_block
         t4_shared_hip = @benchmark begin
-            @call_kernel hip_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+            @call_kernel_shmem hip_loop_4_shared $threads_in_block $blocks_in_grid $shmem $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
             sqrt(sum($b_gpu.^2))
             AMDGPU.synchronize()
         end setup=(fill!($b_gpu, 0.0))
