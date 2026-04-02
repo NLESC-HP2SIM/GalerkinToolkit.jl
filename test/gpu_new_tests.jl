@@ -50,11 +50,11 @@ function select_backend()
 end
 
 if is_cuda_available()
-    macro alloc_shared_sta(T, dims...)
+    macro alloc_shared_sta(T, dims)
         ex = :( CUDA.CuStaticSharedArray($T, $dims) )
         return esc(ex)
     end
-    macro alloc_shared_dyn(T, dims...)
+    macro alloc_shared_dyn(T, dims)
         ex = :( CUDA.CuDynamicSharedArray($T, $dims) )
         return esc(ex)
     end
@@ -64,11 +64,11 @@ if is_cuda_available()
         return esc(ex)
     end
 elseif is_rocm_available()
-    macro alloc_shared_sta(T, dims...)
+    macro alloc_shared_sta(T, dims)
         ex = :( AMDGPU.@ROCStaticLocalArray($T, $dims) )
         return esc(ex)
     end
-    macro alloc_shared_dyn(T, dims...)
+    macro alloc_shared_dyn(T, dims)
         ex = :( AMDGPU.@ROCDynamicLocalArray($T, $dims) )
         return esc(ex)
     end
@@ -83,10 +83,10 @@ elseif is_rocm_available()
         return esc(ex)
     end
 else
-    macro alloc_shared_sta(T, dims...)
+    macro alloc_shared_sta(args...)
         error("No GPU backend available to compile @alloc_shared_sta")
     end
-    macro alloc_shared_dyn(T, dims...)
+    macro alloc_shared_dyn(args...)
         error("No GPU backend available to compile @alloc_shared_dyn")
     end
     macro call_kernel(args...)
