@@ -435,6 +435,34 @@ if is_cuda_available()
             Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
+
+    function cuda_loop_5_atomic!(b,bf_global,uh_faces,V_faces,dΩ_faces)
+        face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if face_id > length(dΩ_faces)
+            return nothing
+        end
+        dΩ_face = dΩ_faces[face_id]
+        V_face = V_faces[dΩ_face]
+        uh_face = uh_faces[dΩ_face]
+        dofs = GT.dofs(V_face)
+        n = GT.num_dofs(V_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            V_point = V_face[dΩ_point]
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,V_point)
+            dx = GT.weight(dΩ_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
+    end
 elseif is_rocm_available()
     function hip_loop_1!(contributions,dΩ_faces)
         face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
@@ -577,6 +605,34 @@ elseif is_rocm_available()
             Atomix.@atomic b[dofs[i]] += bf[i]
         end
     end
+
+    function hip_loop_5_atomic!(b,bf_global,uh_faces,V_faces,dΩ_faces)
+        face_id = (workgroupIdx().x - 1) * workgroupDim().x + workitemIdx().x
+        if face_id > length(dΩ_faces)
+            return nothing
+        end
+        dΩ_face = dΩ_faces[face_id]
+        V_face = V_faces[dΩ_face]
+        uh_face = uh_faces[dΩ_face]
+        dofs = GT.dofs(V_face)
+        n = GT.num_dofs(V_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            V_point = V_face[dΩ_point]
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,V_point)
+            dx = GT.weight(dΩ_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
+    end
 end
 
 @kernel function gpu_loop_1!(contributions,dΩ_faces)
@@ -710,6 +766,33 @@ end
     end
 end
 
+@kernel function gpu_loop_5_atomic!(b,bf_global,uh_faces,V_faces,dΩ_faces)
+    face_id = @index(Global)
+    if face_id <= length(dΩ_faces)
+        dΩ_face = dΩ_faces[face_id]
+        V_face = V_faces[dΩ_face]
+        uh_face = uh_faces[dΩ_face]
+        dofs = GT.dofs(V_face)
+        n = GT.num_dofs(V_face)
+        bf = view(bf_global, :, face_id)
+        fill!(bf,0)
+        for dΩ_point in GT.each_point_new(dΩ_face)
+            V_point = V_face[dΩ_point]
+            uh_point = uh_face[dΩ_point]
+            ux = GT.field(GT.gradient,uh_point)
+            sx = GT.shape_functions(GT.gradient,V_point)
+            dx = GT.weight(dΩ_point)
+            ux_dx = ux*dx
+            for i in 1:n
+                bf[i] += ux_dx⋅sx[i]
+            end
+        end
+        for i in 1:n
+            Atomix.@atomic b[dofs[i]] += bf[i]
+        end
+    end
+end
+
 function main_gpu(params)
     (;face_nodes_layout,face_dofs_layout,k) = params
 
@@ -797,6 +880,10 @@ function main_gpu(params)
         println("Loop 1: HIP speedup is ", (nfaces / time(t1_hip) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
     end
 
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
+
     # Launch kernel 2
     threads_in_block = 256
     t2_gpu = @benchmark begin
@@ -832,6 +919,10 @@ function main_gpu(params)
         println("Loop 2: HIP throughput is ", nfaces / time(t2_hip) * 1e9, " faces per second.")
         println("Loop 2: HIP speedup is ", (nfaces / time(t2_hip) * 1e9) / (nfaces / time(t2_gpu) * 1e9))
     end
+
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 3
     threads_in_block = 256
@@ -869,6 +960,10 @@ function main_gpu(params)
         println("Loop 3: HIP speedup is ", (nfaces / time(t3_hip) * 1e9) / (nfaces / time(t3_gpu) * 1e9))
     end
 
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
+
     # Launch kernel 4 atomic
     threads_in_block = 256
     t4_atomic_gpu = @benchmark begin
@@ -904,6 +999,10 @@ function main_gpu(params)
         println("Loop 4 (atomic): HIP throughput is ", nfaces / time(t4_atomic_hip) * 1e9, " faces per second.")
         println("Loop 4 (atomic): HIP speedup is ", (nfaces / time(t4_atomic_hip) * 1e9) / (nfaces / time(t4_atomic_gpu) * 1e9))
     end
+
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 4 global
     threads_in_block = 256
@@ -941,6 +1040,10 @@ function main_gpu(params)
         println("Loop 4 (global): HIP speedup is ", (nfaces / time(t4_global_hip) * 1e9) / (nfaces / time(t4_global_gpu) * 1e9))
     end
 
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
+
     # Launch kernel 4 local
     threads_in_block = 256
     t4_local_gpu = @benchmark begin
@@ -976,6 +1079,10 @@ function main_gpu(params)
         println("Loop 4 (local): HIP throughput is ", nfaces / time(t4_local_hip) * 1e9, " faces per second.")
         println("Loop 4 (local): HIP speedup is ", (nfaces / time(t4_local_hip) * 1e9) / (nfaces / time(t4_local_gpu) * 1e9))
     end
+
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 4 shared
     threads_in_block = 256
@@ -1013,6 +1120,50 @@ function main_gpu(params)
         println("Loop 4 (shared): HIP throughput is ", nfaces / time(t4_shared_hip) * 1e9, " faces per second.")
         println("Loop 4 (shared): HIP speedup is ", (nfaces / time(t4_shared_hip) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
     end
+
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
+
+    # Launch kernel 5 atomic
+    threads_in_block = 256
+    t5_atomic_gpu = @benchmark begin
+        gpu_loop_5_atomic!($dev, $threads_in_block)($b_gpu, $bf_gpu, $uh_faces_gpu, $V_faces_gpu, $dΩ_faces_gpu, ndrange=$nfaces)
+        sqrt(sum($b_gpu.^2))
+        KA.synchronize($dev)
+    end setup=(fill!($b_gpu, 0.0))
+    @show sqrt(sum(b_gpu.^2))
+    if is_cuda_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t5_atomic_cuda = @benchmark begin
+            @call_kernel cuda_loop_5_atomic $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu $V_faces_gpu $dΩ_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            CUDA.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    elseif is_rocm_available()
+        threads_in_block = 256
+        blocks_in_grid = cld(nfaces, threads_in_block)
+        t5_atomic_hip = @benchmark begin
+            @call_kernel hip_loop_5_atomic $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu $V_faces_gpu $dΩ_faces_gpu
+            sqrt(sum($b_gpu.^2))
+            AMDGPU.synchronize()
+        end setup=(fill!($b_gpu, 0.0))
+        @show sqrt(sum(b_gpu.^2))
+    end
+    println("Loop 5 (atomic): KernelAbstractions throughput is ", nfaces / time(t5_atomic_gpu) * 1e9, " faces per second.")
+    if is_cuda_available()
+        println("Loop 5 (atomic): CUDA throughput is ", nfaces / time(t5_atomic_cuda) * 1e9, " faces per second.")
+        println("Loop 5 (atomic): CUDA speedup is ", (nfaces / time(t5_atomic_cuda) * 1e9) / (nfaces / time(t5_atomic_gpu) * 1e9))
+    elseif is_rocm_available()
+        println("Loop 5 (atomic): HIP throughput is ", nfaces / time(t5_atomic_hip) * 1e9, " faces per second.")
+        println("Loop 5 (atomic): HIP speedup is ", (nfaces / time(t5_atomic_hip) * 1e9) / (nfaces / time(t5_atomic_gpu) * 1e9))
+    end
+
+    contributions = KA.zeros(dev, Float64, nfaces)
+    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 end
 
 for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
