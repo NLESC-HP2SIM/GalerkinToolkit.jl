@@ -50,12 +50,24 @@ function select_backend()
 end
 
 if is_cuda_available()
+    macro alloc_shared_sta(T, dims...)
+        ex = :( CUDA.CuStaticSharedArray($T, $dims) )
+        return esc(ex)
+    end
+    macro alloc_shared_dyn(T, dims...)
+        ex = :( CUDA.CuDynamicSharedArray($T, $dims) )
+        return esc(ex)
+    end
     macro call_kernel(name, threads, blocks, args...)
         func_name = name isa Symbol ? Symbol(name, :!) : name
         ex = :( @cuda threads=$threads blocks=$blocks $func_name($(args...)) )
         return esc(ex)
     end
 elseif is_rocm_available()
+    macro alloc_shared_sta(T, dims...)
+        ex = :( AMDGPU.@ROCStaticLocalArray($T, $dims) )
+        return esc(ex)
+    end
     macro alloc_shared_dyn(T, dims...)
         ex = :( AMDGPU.@ROCDynamicLocalArray($T, $dims) )
         return esc(ex)
@@ -71,11 +83,17 @@ elseif is_rocm_available()
         return esc(ex)
     end
 else
+    macro alloc_shared_sta(T, dims...)
+        error("No GPU backend available to compile @alloc_shared_sta")
+    end
     macro alloc_shared_dyn(T, dims...)
         error("No GPU backend available to compile @alloc_shared_dyn")
     end
     macro call_kernel(args...)
         error("No GPU backend available to compile @call_kernel")
+    end
+    macro call_kernel_shmem(args...)
+        error("No GPU backend available to compile @call_kernel_shmem")
     end
 end
 
@@ -419,7 +437,7 @@ if is_cuda_available()
     end
 
     function cuda_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
-        bf_shared = CuStaticSharedArray(Float64, (max_dofs,block_dim))
+        bf_shared = @alloc_shared_sta Float64, (max_dofs,block_dim)
         face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
         if face_id > length(uh_faces)
             return nothing
