@@ -437,7 +437,7 @@ if is_cuda_available()
     end
 
     function cuda_loop_4_shared!(b,::Val{max_dofs},::Val{block_dim},uh_faces) where {max_dofs,block_dim}
-        bf_shared = @alloc_shared_sta Float64, (max_dofs,block_dim)
+        bf_shared = @alloc_shared_sta Float64 (max_dofs,block_dim)
         face_id = (blockIdx().x - 1) * blockDim().x + threadIdx().x
         if face_id > length(uh_faces)
             return nothing
