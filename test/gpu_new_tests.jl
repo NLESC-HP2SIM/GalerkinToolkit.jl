@@ -1283,10 +1283,10 @@ function main_gpu(params)
     KA.copy!(ltable_gpu, ltable_cpu)
     cpu_loop_6_symbolic!(AI,AJ,V_faces_cpu)
 
-    # Launch kernel 6 numerical lookup table atomic
+    # Launch kernel 6 numeric lookup table atomic
     threads_in_block = 256
-    t6_numerical_ltable_atomic_gpu = @benchmark begin
-        gpu_loop_6_numerical_ltable_atomic!($dev, $threads_in_block)($AV_gpu, $V_faces_gpu, $ltable_gpu, ndrange=$nfaces)
+    t6_numeric_ltable_atomic_gpu = @benchmark begin
+        gpu_loop_6_numeric_ltable_atomic!($dev, $threads_in_block)($AV_gpu, $V_faces_gpu, $ltable_gpu, ndrange=$nfaces)
         KA.synchronize($dev)
     end setup=(fill!($AV_gpu, 0.0))
     A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
@@ -1296,8 +1296,8 @@ function main_gpu(params)
     if is_cuda_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
-        t6_numerical_ltable_atomic_cuda = @benchmark begin
-            @call_kernel cuda_loop_6_numerical_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
+        t6_numeric_ltable_atomic_cuda = @benchmark begin
+            @call_kernel cuda_loop_6_numeric_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
             CUDA.synchronize()
         end setup=(fill!($AV_gpu, 0.0))
         A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
@@ -1307,8 +1307,8 @@ function main_gpu(params)
     elseif is_rocm_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
-        t6_numerical_ltable_atomic_hip = @benchmark begin
-            @call_kernel hip_loop_6_numerical_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
+        t6_numeric_ltable_atomic_hip = @benchmark begin
+            @call_kernel hip_loop_6_numeric_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
             AMDGPU.synchronize()
         end setup=(fill!($AV_gpu, 0.0))
         A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
@@ -1316,13 +1316,13 @@ function main_gpu(params)
         b_cpu = A*x
         @show norm(b_cpu)
     end
-    println("Loop 6 (numerical lookup table atomic): KernelAbstractions throughput is ", nfaces / time(t6_numerical_ltable_atomic_gpu) * 1e9, " faces per second.")
+    println("Loop 6 (numeric lookup table atomic): KernelAbstractions throughput is ", nfaces / time(t6_numeric_ltable_atomic_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
-        println("Loop 6 (numerical lookup table atomic): CUDA throughput is ", nfaces / time(t6_numerical_ltable_atomic_cuda) * 1e9, " faces per second.")
-        println("Loop 6 (numerical lookup table atomic): CUDA speedup is ", (nfaces / time(t6_numerical_ltable_atomic_cuda) * 1e9) / (nfaces / time(t6_numerical_ltable_atomic_gpu) * 1e9))
+        println("Loop 6 (numeric lookup table atomic): CUDA throughput is ", nfaces / time(t6_numeric_ltable_atomic_cuda) * 1e9, " faces per second.")
+        println("Loop 6 (numeric lookup table atomic): CUDA speedup is ", (nfaces / time(t6_numeric_ltable_atomic_cuda) * 1e9) / (nfaces / time(t6_numeric_ltable_atomic_gpu) * 1e9))
     elseif is_rocm_available()
-        println("Loop 6 (numerical lookup table atomic): HIP throughput is ", nfaces / time(t6_numerical_ltable_atomic_hip) * 1e9, " faces per second.")
-        println("Loop 6 (numerical lookup table atomic): HIP speedup is ", (nfaces / time(t6_numerical_ltable_atomic_hip) * 1e9) / (nfaces / time(t6_numerical_ltable_atomic_gpu) * 1e9))
+        println("Loop 6 (numeric lookup table atomic): HIP throughput is ", nfaces / time(t6_numeric_ltable_atomic_hip) * 1e9, " faces per second.")
+        println("Loop 6 (numeric lookup table atomic): HIP speedup is ", (nfaces / time(t6_numeric_ltable_atomic_hip) * 1e9) / (nfaces / time(t6_numeric_ltable_atomic_gpu) * 1e9))
     end
 
     contributions = KA.zeros(dev, Float64, nfaces)
