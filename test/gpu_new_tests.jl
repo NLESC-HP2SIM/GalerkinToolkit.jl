@@ -264,7 +264,7 @@ function cpu_loop_6_numeric_ltable!(AV,V_faces,ltable)
             for j in 1:n
                 sx_dx_j = sx[j]*dx
                 for i in 1:n
-                    AV[offset + (i-1)*n + j] += sx[i]⋅sx_dx_j
+                    AV[offset + (j-1)*n + i] += sx[i]⋅sx_dx_j
                 end
             end
         end
