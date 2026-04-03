@@ -242,6 +242,36 @@ function cpu_loop_6_numeric!(AV,Af,V_faces)
     end
 end
 
+function cpu_loop_6_ltable!(ltable,V_faces)
+    num_nz = 0
+    face_id = 0
+    for V_face in V_faces
+        ltable[face_id] = num_nz
+        n = GT.num_dofs(V_face)
+        num_nz += n*n
+        face_id += 1
+    end
+end
+
+function cpu_loop_6_numeric_ltable!(AV,V_faces,ltable)
+    face_id = 0
+    for V_face in V_faces
+        n = GT.num_dofs(V_face)
+        offset = ltable[face_id]
+        for V_point in GT.each_point_new(V_face)
+            dx = GT.weight(V_point)
+            sx = GT.shape_functions(GT.gradient,V_point)
+            for j in 1:n
+                sx_dx_j = sx[j]*dx
+                for i in 1:n
+                    AV[offset + (i-1)*n + j] += sx[i]⋅sx_dx_j
+                end
+            end
+        end
+        face_id += 1
+    end
+end
+
 function main_cpu(params)
     (;face_nodes_layout,face_dofs_layout,k) = params
 
@@ -315,6 +345,15 @@ function main_cpu(params)
     b = A*x
     @show norm(b)
 
+    # Loop using a a lookup table
+    fill(AV,0)
+    ltable = zeros(Int32,length(V_faces_cpu))
+    cpu_loop_6_ltable!(ltable,V_faces_cpu)
+    cpu_loop_6_numeric_ltable!(AV,V_faces_cpu,ltable)
+    A,Acache = PA.sparse_matrix(AI,AJ,AV,n_global,n_global;reuse=Val(true))
+    PA.sparse_matrix!(A,AV,Acache)
+    b = A*x
+    @show norm(b)
 end
 
 if is_cuda_available()
