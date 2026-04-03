@@ -1270,7 +1270,7 @@ function main_gpu(params)
         println("Loop 5 (atomic): HIP speedup is ", (nfaces / time(t5_atomic_hip) * 1e9) / (nfaces / time(t5_atomic_gpu) * 1e9))
     end
    
-    b_cpu = zeros(GT.num_free_dofs(V))
+    b = zeros(GT.num_free_dofs(V))
     num_nz = cpu_loop_6_count(V_faces_cpu)
     n_global = GT.num_dofs(V)
     x = GT.free_values(uh)
@@ -1289,10 +1289,11 @@ function main_gpu(params)
         gpu_loop_6_numeric_ltable_atomic!($dev, $threads_in_block)($AV_gpu, $V_faces_gpu, $ltable_gpu, ndrange=$nfaces)
         KA.synchronize($dev)
     end setup=(fill!($AV_gpu, 0.0))
-    A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
-    PA.sparse_matrix!(A,AV_gpu,Acache)
-    b_cpu = A*x
-    @show norm(b_cpu)
+    AV_cpu = Array(AV_gpu)
+    A,Acache = PA.sparse_matrix(AI,AJ,AV_cpu,n_global,n_global;reuse=Val(true))
+    PA.sparse_matrix!(A,AV_cpu,Acache)
+    b = A*x
+    @show norm(b)
     if is_cuda_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
@@ -1300,10 +1301,11 @@ function main_gpu(params)
             @call_kernel cuda_loop_6_numeric_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
             CUDA.synchronize()
         end setup=(fill!($AV_gpu, 0.0))
-        A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
-        PA.sparse_matrix!(A,AV_gpu,Acache)
-        b_cpu = A*x
-        @show norm(b_cpu)
+        AV_cpu = Array(AV_gpu)
+        A,Acache = PA.sparse_matrix(AI,AJ,AV_cpu,n_global,n_global;reuse=Val(true))
+        PA.sparse_matrix!(A,AV_cpu,Acache)
+        b = A*x
+        @show norm(b)
     elseif is_rocm_available()
         threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
@@ -1311,10 +1313,11 @@ function main_gpu(params)
             @call_kernel hip_loop_6_numeric_ltable_atomic $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
             AMDGPU.synchronize()
         end setup=(fill!($AV_gpu, 0.0))
-        A,Acache = PA.sparse_matrix(AI,AJ,AV_gpu,n_global,n_global;reuse=Val(true))
-        PA.sparse_matrix!(A,AV_gpu,Acache)
-        b_cpu = A*x
-        @show norm(b_cpu)
+        AV_cpu = Array(AV_gpu)
+        A,Acache = PA.sparse_matrix(AI,AJ,AV_cpu,n_global,n_global;reuse=Val(true))
+        PA.sparse_matrix!(A,AV_cpu,Acache)
+        b = A*x
+        @show norm(b)
     end
     println("Loop 6 (numeric lookup table atomic): KernelAbstractions throughput is ", nfaces / time(t6_numeric_ltable_atomic_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
