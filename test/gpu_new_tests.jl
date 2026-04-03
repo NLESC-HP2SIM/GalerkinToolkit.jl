@@ -1336,12 +1336,12 @@ for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
     for face_dofs_layout in layouts
         for face_nodes_layout in layouts
             params = (;face_nodes_layout,face_dofs_layout,k)
-            @println("Running CPU version...")
+            println("Running CPU version...")
             main_cpu(params)
-            @println()
-            @println("Running GPU version...")
+            println()
+            println("Running GPU version...")
             main_gpu(params)
-            @println()
+            println()
         end
     end
     println()
