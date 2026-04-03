@@ -896,7 +896,7 @@ end
     end
 end
 
-function gpu_loop_6_numeric_ltable_atomic!(AV,V_faces,ltable)
+@kernel function gpu_loop_6_numeric_ltable_atomic!(AV,V_faces,ltable)
     face_id = @index(Global)
     if face_id <= length(V_faces)
         V_face = V_faces[face_id]
@@ -1269,16 +1269,7 @@ function main_gpu(params)
         println("Loop 5 (atomic): HIP throughput is ", nfaces / time(t5_atomic_hip) * 1e9, " faces per second.")
         println("Loop 5 (atomic): HIP speedup is ", (nfaces / time(t5_atomic_hip) * 1e9) / (nfaces / time(t5_atomic_gpu) * 1e9))
     end
-
-    
-    # fill!(AV,0)
-    # ltable = zeros(Int32,length(V_faces_cpu))
-    # cpu_loop_6_ltable!(ltable,V_faces_cpu)
-    # cpu_loop_6_numeric_ltable!(AV,V_faces_cpu,ltable)
-    # A,Acache = PA.sparse_matrix(AI,AJ,AV,n_global,n_global;reuse=Val(true))
-    # PA.sparse_matrix!(A,AV,Acache)
-    # b = A*x
-    # @show norm(b)
+   
     b_cpu = zeros(GT.num_free_dofs(V))
     num_nz = cpu_loop_6_count(V_faces_cpu)
     n_global = GT.num_dofs(V)
