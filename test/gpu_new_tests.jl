@@ -244,7 +244,7 @@ end
 
 function cpu_loop_6_ltable!(ltable,V_faces)
     num_nz = 0
-    face_id = 0
+    face_id = 1
     for V_face in V_faces
         ltable[face_id] = num_nz
         n = GT.num_dofs(V_face)
@@ -254,7 +254,7 @@ function cpu_loop_6_ltable!(ltable,V_faces)
 end
 
 function cpu_loop_6_numeric_ltable!(AV,V_faces,ltable)
-    face_id = 0
+    face_id = 1
     for V_face in V_faces
         n = GT.num_dofs(V_face)
         offset = ltable[face_id]
