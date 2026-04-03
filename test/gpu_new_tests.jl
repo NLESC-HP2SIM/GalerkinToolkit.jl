@@ -339,14 +339,14 @@ function main_cpu(params)
     @show norm(b)
 
     # Loop using a previously built matrix
-    fill(AV,0)
+    fill!(AV,0)
     cpu_loop_6_numeric!(AV,Af,V_faces_cpu)
     PA.sparse_matrix!(A,AV,Acache)
     b = A*x
     @show norm(b)
 
     # Loop using a a lookup table
-    fill(AV,0)
+    fill!(AV,0)
     ltable = zeros(Int32,length(V_faces_cpu))
     cpu_loop_6_ltable!(ltable,V_faces_cpu)
     cpu_loop_6_numeric_ltable!(AV,V_faces_cpu,ltable)
