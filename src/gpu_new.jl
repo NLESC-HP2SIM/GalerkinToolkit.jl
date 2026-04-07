@@ -107,6 +107,7 @@ face_nodes(a::TabulatedMesh) = a.face_nodes
 node_coordinates(a::TabulatedMesh) = a.node_coordinates
 reference_weights(a::TabulatedMesh) = a.reference_weights
 quadrature(a::TabulatedMesh) = a.quadrature
+num_faces(a::TabulatedMesh) = length(face_nodes(a))  # TODO: is this correct?
 
 function Adapt.adapt_structure(to,x::TabulatedMesh)
     mesh = nothing
@@ -146,9 +147,22 @@ function change_data_layout(x::TabulatedMesh;face_nodes_layout=identity)
                   x.reference_coordinates,)
 end
 
+function change_workspace_location(x::TabulatedMesh;kwargs...)
+    TabulatedMesh(
+                  x.mesh,
+                  x.num_dims,
+                  x.quadrature,
+                  x.reference_shape_functions_value,
+                  x.reference_shape_functions_gradient,
+                  x.reference_unit_normals,
+                  x.face_nodes,
+                  x.node_coordinates,
+                  x.reference_weights,
+                  x.reference_coordinates,)
+end
 
 function at_face_id(state::TabulatedMesh,face_id)
-    TabulatedFace(state,face_id,nothing)
+    TabulatedFace(state,face_id,nothing,nothing)
 end
 
 function at_point_id(state::TabulatedMesh,face,i)
@@ -216,6 +230,16 @@ shape_functions(::Val{:gradient},a::TabulatedSpace) = a.shape_functions_gradient
 shape_functions(::Val{:jacobian},a::TabulatedSpace) = a.shape_functions_jacobian
 shape_functions(f,a) = shape_functions(shape_function_to_val(f), a)
 face_dofs(a::TabulatedSpace) = a.face_dofs
+
+function num_faces(space::TabulatedSpace)
+    if space.space !== nothing
+        num_faces(space.space)
+    elseif space.tabulated_mesh !== nothing
+        num_faces(tabulated_mesh(space))
+    else
+        num_faces(face_dofs(space))
+    end
+end
 
 function tabulate(space::AbstractSpace,quadrature::AbstractQuadrature;tabulate=())
     mesh = GT.mesh(space)
@@ -291,6 +315,38 @@ function change_data_layout(x::TabulatedSpace;face_dofs_layout=identity,kwargs..
                   )
 end
 
+struct GPUGlobalWorkspace{S}
+    alloc::S
+end
+
+Adapt.@adapt_structure GPUGlobalWorkspace
+
+function change_shape_functions_location(x::AbstractArray, space, workspace_location::Val{:global_memory})
+    nfaces = num_faces(space)
+    ndofs = length(x)
+    GPUGlobalWorkspace(similar(x, (ndofs, nfaces)))
+end
+
+function change_shape_functions_location(x::Nothing, space, workspace_location)
+    nothing
+end
+
+function change_workspace_location(x::TabulatedSpace;workspace_location)
+    shape_functions_value = change_shape_functions_location(x.shape_functions_value, x, workspace_location)
+    shape_functions_gradient = change_shape_functions_location(x.shape_functions_gradient, x, workspace_location)
+    shape_functions_jacobian = change_shape_functions_location(x.shape_functions_jacobian, x, workspace_location)
+    TabulatedSpace(
+                   x.space,
+                   x.tabulated_mesh,
+                   x.reference_shape_functions_value,
+                   x.reference_shape_functions_gradient,
+                   x.reference_shape_functions_jacobian,
+                   shape_functions_value,
+                   shape_functions_gradient,
+                   shape_functions_jacobian,
+                   x.face_dofs,
+                  )
+end
 
 function each_face_new(space::AbstractSpace, quadrature::AbstractQuadrature;tabulate=())
     state = GT.tabulate(space,quadrature;tabulate)
@@ -302,12 +358,33 @@ function at_face_id(state::TabulatedSpace,i)
     at_mesh_face(state,mesh_face)
 end
 
+function shape_function_at_mesh_face(shape_function, mesh_face)
+    shape_function
+end
+
+function shape_function_at_mesh_face(shape_function::GPUGlobalWorkspace, mesh_face)
+    view(shape_function.alloc,:,id(mesh_face))
+end
+
 function at_mesh_face(state::TabulatedSpace,mesh_face)
-    TabulatedFace(state,id(mesh_face),mesh_face)
+    workspace = FaceWorkspace(
+        shape_function_at_mesh_face(shape_functions(Val(:value), state), mesh_face),
+        shape_function_at_mesh_face(shape_functions(Val(:gradient), state), mesh_face),
+        shape_function_at_mesh_face(shape_functions(Val(:jacobian), state), mesh_face),
+        reference_shape_functions(Val(:value), state),
+        reference_shape_functions(Val(:gradient), state),
+        reference_shape_functions(Val(:jacobian), state),
+    )
+    TabulatedFace(
+        state,
+        id(mesh_face),
+        workspace,
+        mesh_face,
+    )
 end
 
 function at_point_id(state::TabulatedSpace,face,i)
-    mesh_point = at_point_id(workspace(face),i)
+    mesh_point = at_point_id(tabulated_mesh(face),face,i)
     at_mesh_point(state,face,mesh_point)
 end
 
@@ -381,6 +458,16 @@ function change_data_layout(x::TabulatedField;kwargs...)
                   )
 end
 
+function change_workspace_location(x::TabulatedField;kwargs...)
+    tabulated_space = change_workspace_location(x.tabulated_space;kwargs...)
+    TabulatedField(
+                   x.field,
+                   tabulated_space,
+                   x.free_values,
+                   x.dirichlet_values,
+                  )
+end
+
 function each_face_new(uh::DiscreteField, quadrature::AbstractQuadrature;tabulate=())
     state = GT.tabulate(uh,quadrature;tabulate)
     each_face_new(state)
@@ -392,12 +479,25 @@ function at_face_id(state::TabulatedField,id)
 end
 
 function at_mesh_face(state::TabulatedField,mesh_face)
-    space_face = at_mesh_face(tabulated_space(state),mesh_face)
-    TabulatedFace(state,id(mesh_face),space_face)
+    space = tabulated_space(state)
+    workspace = FaceWorkspace(
+        shape_function_at_mesh_face(shape_functions(Val(:value), space), mesh_face),
+        shape_function_at_mesh_face(shape_functions(Val(:gradient), space), mesh_face),
+        shape_function_at_mesh_face(shape_functions(Val(:jacobian), space), mesh_face),
+        reference_shape_functions(Val(:value), space),
+        reference_shape_functions(Val(:gradient), space),
+        reference_shape_functions(Val(:jacobian), space),
+    )
+    TabulatedFace(
+        state,
+        id(mesh_face),
+        workspace,
+        mesh_face,
+    )
 end
 
 function at_point_id(state::TabulatedField,face,i)
-    mesh_point = at_point_id(workspace(workspace(face)),i)
+    mesh_point = at_point_id(tabulated_mesh(tabulated_space(state)), face, i)
     at_mesh_point(state,face,mesh_point)
 end
 
@@ -464,19 +564,46 @@ function change_data_layout(a::Each;kwargs...)
         )
 end
 
-struct TabulatedFace{A,B,C} <: AbstractFaceNew
+function change_workspace_location(a::Each;kwargs...)
+    Each(
+         a.update,
+         change_workspace_location(a.state;kwargs...),
+         a.iterator,
+        )
+end
+
+struct FaceWorkspace{A,B,C,D,E,F}
+    shape_functions_value::A
+    shape_functions_gradient::B
+    shape_functions_jacobian::C
+    reference_shape_functions_value::D
+    reference_shape_functions_gradient::E
+    reference_shape_functions_jacobian::F
+end
+
+shape_functions(::Val{:value},a::FaceWorkspace) = a.shape_functions_value
+shape_functions(::Val{:gradient},a::FaceWorkspace) = a.shape_functions_gradient
+shape_functions(::Val{:jacobian},a::FaceWorkspace) = a.shape_functions_jacobian
+reference_shape_functions(::Val{:value},a::FaceWorkspace) = a.reference_shape_functions_value
+reference_shape_functions(::Val{:gradient},a::FaceWorkspace) = a.reference_shape_functions_gradient
+reference_shape_functions(::Val{:jacobian},a::FaceWorkspace) = a.reference_shape_functions_jacobian
+
+struct TabulatedFace{A,B,C,D} <: AbstractFaceNew
     parent::A
     id::B
     workspace::C
+    mesh_face::D
 end
+
 parent(a::TabulatedFace) = a.parent
 id(a::TabulatedFace) = a.id
 tabulated_mesh(a::TabulatedFace) = tabulated_mesh(parent(a))
 tabulated_space(a::TabulatedFace) = tabulated_space(parent(a))
 tabulated_field(a::TabulatedFace) = tabulated_field(parent(a))
 workspace(a::TabulatedFace) = a.workspace
-at_face_id(a,id) = TabulatedFace(a,id,nothing)
-
+at_face_id(a,id) = TabulatedFace(a,id,nothing,nothing)
+reference_shape_functions(f,a::TabulatedFace) = reference_shape_functions(f,tabulated_space(a))
+shape_functions(f,a::TabulatedFace) = shape_functions(f,workspace(a))
 
 function each_face_new(state::AbstractTabulation)
     quadrature = GT.quadrature(state)
@@ -692,14 +819,16 @@ end
 end
 
 function shape_functions(f,point::AbstractPointNew)
-    alloc = GT.tabulated_space(parent(point))
-    i_fun = shape_functions(f,alloc)
+    i_fun = shape_functions(f,parent(point))
+end
+
+function reference_shape_functions(f,point::AbstractPointNew)
+    i_fun = reference_shape_functions(f,parent(point))
 end
 
 function map_shape_functions!(f,point::AbstractPointNew)
-    alloc = GT.tabulated_space(parent(point))
-    i_fun = shape_functions(f,alloc)
-    i_p_ref_fun = reference_shape_functions(f,alloc)
+    i_fun = shape_functions(f,point)
+    i_p_ref_fun = reference_shape_functions(f,point)
     p = id(point)
     ndofs = size(i_p_ref_fun,1)
     i = 0
@@ -739,7 +868,7 @@ end
 
 function field(f,point::AbstractPointNew)
     alloc = GT.tabulated_field(parent(point))
-    i_fun = shape_functions(f,alloc)
+    i_fun = shape_functions(f,parent(point))
     @assert i_fun !== nothing
     free_dof_val = free_values(alloc)
     diri_dof_val = dirichlet_values(alloc)
@@ -812,6 +941,7 @@ end
     end
     J
 end
+
 
 
 

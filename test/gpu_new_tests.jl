@@ -303,6 +303,12 @@ function main_cpu(params)
     V_faces_cpu = Adapt.adapt_structure(Array,V_faces_cpu)
     uh_faces_cpu = Adapt.adapt_structure(Array,uh_faces_cpu)
 
+    # Set the workspace location depending on the granularity
+    workspace_location = Val(:global_memory) # Val(:shared_memory) Val(:thread_memory)
+    dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu;workspace_location)
+    V_faces_gpu = GT.change_workspace_location(V_faces_gpu;workspace_location)
+    uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu;workspace_location)
+
     #dΩ_face_gpu = CUDA.cu(dΩ_faces_cpu)
     #dΩ_face_gpu = GT.loop_options(dΩ_face_gpu;
     #    face_dofs_layout=:face_major, # :face_minor
