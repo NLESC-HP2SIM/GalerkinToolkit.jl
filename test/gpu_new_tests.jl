@@ -303,19 +303,6 @@ function main_cpu(params)
     V_faces_cpu = Adapt.adapt_structure(Array,V_faces_cpu)
     uh_faces_cpu = Adapt.adapt_structure(Array,uh_faces_cpu)
 
-    # Set the workspace location depending on the granularity
-    workspace_location = Val(:global_memory) # Val(:shared_memory) Val(:thread_memory)
-    dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu;workspace_location)
-    V_faces_gpu = GT.change_workspace_location(V_faces_gpu;workspace_location)
-    uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu;workspace_location)
-
-    #dΩ_face_gpu = CUDA.cu(dΩ_faces_cpu)
-    #dΩ_face_gpu = GT.loop_options(dΩ_face_gpu;
-    #    face_dofs_layout=:face_major, # :face_minor
-    #    granularity=:face_per_thread, # :face_per_block
-    #    shape_functions_location =:global_memory, # :shared_memory, :kernel_memory
-    #   )
-
     @show r_cpu = cpu_loop_1(dΩ_faces_cpu)
     @show r_cpu = cpu_loop_2(uh_faces_cpu)
     @show r_cpu = cpu_loop_3(uh_faces_cpu,dΩ_faces_cpu)
@@ -1030,17 +1017,17 @@ function main_gpu(params)
     V_faces_gpu = adapt(dev, V_faces_cpu)
     uh_faces_gpu = adapt(dev, uh_faces_cpu)
 
+    # Set the workspace location depending on the granularity
+    workspace_location = Val(:global_memory) # Val(:shared_memory) Val(:thread_memory)
+    dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu;workspace_location)
+    V_faces_gpu = GT.change_workspace_location(V_faces_gpu;workspace_location)
+    uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu;workspace_location)
+
     #TODO
     #granularity = Val(:face_per_thread) # Val(:face_per_block)
     #dΩ_faces_cpu = GT.change_loop_granularity(dΩ_faces_cpu,granularity)
     #V_faces_cpu = GT.change_loop_granularity(V_faces_cpu,granularity)
     #uh_faces_cpu = GT.change_loop_granularity(uh_faces_cpu,granularity)
-    #
-    #Maybe workspace location should not be independent and depend on granularity
-    #workspace_location = Val(:global_memory) # Val(:shared_memory) Val(:thread_memory)
-    #dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu,workspace_location)
-    #V_faces_gpu = GT.change_workspace_location(V_faces_gpu,workspace_location)
-    #uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu,workspace_location)
 
     nfaces = length(dΩ_faces_gpu)
     nmax = GT.max_num_reference_dofs(V)
