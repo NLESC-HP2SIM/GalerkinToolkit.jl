@@ -321,10 +321,26 @@ end
 
 Adapt.@adapt_structure GPUGlobalWorkspace
 
-function change_shape_functions_location(x::AbstractArray, space, workspace_location::Val{:global_memory})
+function change_shape_functions_location(x::AbstractArray, space, workspace_location::Type{GPUGlobalWorkspace})
     nfaces = num_faces(space)
     ndofs = length(x)
     GPUGlobalWorkspace(similar(x, (ndofs, nfaces)))
+end
+
+struct GPUThreadWorkspace{T, ndofs}
+end
+
+function change_shape_functions_location(x::AbstractArray, space, workspace_location::Type{GPUThreadWorkspace})
+    ndofs = length(x)
+    GPUThreadWorkspace{eltype(x), ndofs}()
+end
+
+struct GPUSharedMemWorkspace{threads_per_block, T, ndofs}
+end
+
+function change_shape_functions_location(x::AbstractArray, space, workspace_location::Type{GPUSharedMemWorkspace{threads_per_block}}) where {threads_per_block}
+    ndofs = length(x)
+    GPUSharedMemWorkspace{threads_per_block, eltype(x), ndofs}()
 end
 
 function change_shape_functions_location(x::Nothing, space, workspace_location)
@@ -364,6 +380,19 @@ end
 
 function shape_function_at_mesh_face(shape_function::GPUGlobalWorkspace, mesh_face)
     view(shape_function.alloc,:,id(mesh_face))
+end
+
+import KernelAbstractions as KA
+
+function shape_function_at_mesh_face(::GPUThreadWorkspace{T,ndofs}, mesh_face) where {T,ndofs}
+    #KA.@private T ndofs  # Also possible using KA
+    zero(MVector{ndofs,T})
+end
+
+function shape_function_at_mesh_face(::GPUSharedMemWorkspace{threads_per_block,T,ndofs}, mesh_face) where {threads_per_block,T,ndofs}
+    shared_alloc = KA.@localmem T (ndofs,threads_per_block)
+    thread_id = KA.@index(Local,Linear)
+    view(shared_alloc,:,thread_id)
 end
 
 function at_mesh_face(state::TabulatedSpace,mesh_face)
@@ -827,6 +856,7 @@ function reference_shape_functions(f,point::AbstractPointNew)
 end
 
 function map_shape_functions!(f,point::AbstractPointNew)
+    space = workspace(point)
     i_fun = shape_functions(f,point)
     i_p_ref_fun = reference_shape_functions(f,point)
     p = id(point)

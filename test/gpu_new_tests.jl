@@ -11,6 +11,7 @@ import GalerkinToolkit as GT
 using KernelAbstractions
 import KernelAbstractions as KA
 using StaticArrays
+using Cthulhu
 
 const HAS_CUDA = try
     @eval using CUDA
@@ -90,7 +91,7 @@ else
         error("No GPU backend available to compile @alloc_shared_dyn")
     end
     macro call_kernel(args...)
-        error("No GPU backend available to compile @call_kernel")
+        #error("No GPU backend available to compile @call_kernel")
     end
     macro call_kernel_shmem(args...)
         error("No GPU backend available to compile @call_kernel_shmem")
@@ -1018,16 +1019,14 @@ function main_gpu(params)
     uh_faces_gpu = adapt(dev, uh_faces_cpu)
 
     # Set the workspace location depending on the granularity
-    workspace_location = Val(:global_memory) # Val(:shared_memory) Val(:thread_memory)
+    #Maybe workspace location should not be independent and depend on granularity
+    threads_in_block = 256
+    workspace_location = GT.GPUGlobalWorkspace 
+    # workspace_location = GT.GPUThreadWorkspace
+    # workspace_location = GT.GPUSharedMemWorkspace{threads_in_block}
     dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu;workspace_location)
     V_faces_gpu = GT.change_workspace_location(V_faces_gpu;workspace_location)
     uh_faces_gpu = GT.change_workspace_location(uh_faces_gpu;workspace_location)
-
-    #TODO
-    #granularity = Val(:face_per_thread) # Val(:face_per_block)
-    #dΩ_faces_cpu = GT.change_loop_granularity(dΩ_faces_cpu,granularity)
-    #V_faces_cpu = GT.change_loop_granularity(V_faces_cpu,granularity)
-    #uh_faces_cpu = GT.change_loop_granularity(uh_faces_cpu,granularity)
 
     nfaces = length(dΩ_faces_gpu)
     nmax = GT.max_num_reference_dofs(V)
@@ -1036,7 +1035,6 @@ function main_gpu(params)
     bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 1
-    threads_in_block = 256
     t1_gpu = @benchmark begin
         gpu_loop_1!($dev, $threads_in_block)($contributions, $dΩ_faces_gpu, ndrange=$nfaces)
         sum($contributions)
@@ -1044,7 +1042,6 @@ function main_gpu(params)
     end
     @show sum(contributions)
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_cuda = @benchmark begin
             @call_kernel cuda_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
@@ -1053,7 +1050,6 @@ function main_gpu(params)
         end
         @show sum(contributions)
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_hip = @benchmark begin
             @call_kernel hip_loop_1 $threads_in_block $blocks_in_grid $contributions $dΩ_faces_gpu
@@ -1074,7 +1070,6 @@ function main_gpu(params)
     contributions = KA.zeros(dev, Float64, nfaces)
 
     # Launch kernel 2
-    threads_in_block = 256
     t2_gpu = @benchmark begin
         gpu_loop_2!($dev, $threads_in_block)($contributions, $uh_faces_gpu, ndrange=$nfaces)
         sum($contributions)
@@ -1082,7 +1077,6 @@ function main_gpu(params)
     end
     @show sum(contributions)
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t2_cuda = @benchmark begin
             @call_kernel cuda_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
@@ -1091,7 +1085,6 @@ function main_gpu(params)
         end
         @show sum(contributions)
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t2_hip = @benchmark begin
             @call_kernel hip_loop_2 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu
@@ -1112,7 +1105,6 @@ function main_gpu(params)
     contributions = KA.zeros(dev, Float64, nfaces)
 
     # Launch kernel 3
-    threads_in_block = 256
     t3_gpu = @benchmark begin
         gpu_loop_3!($dev, $threads_in_block)($contributions, $uh_faces_gpu, $dΩ_faces_gpu, ndrange=$nfaces)
         sum($contributions)
@@ -1120,7 +1112,6 @@ function main_gpu(params)
     end
     @show sum(contributions)
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t3_cuda = @benchmark begin
             @call_kernel cuda_loop_3 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu $dΩ_faces_gpu
@@ -1129,7 +1120,6 @@ function main_gpu(params)
         end
         @show sum(contributions)
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t3_hip = @benchmark begin
             @call_kernel hip_loop_3 $threads_in_block $blocks_in_grid $contributions $uh_faces_gpu $dΩ_faces_gpu
@@ -1150,7 +1140,6 @@ function main_gpu(params)
     b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
 
     # Launch kernel 4 atomic
-    threads_in_block = 256
     t4_atomic_gpu = @benchmark begin
         gpu_loop_4_atomic!($dev, $threads_in_block)($b_gpu, $uh_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
@@ -1158,7 +1147,6 @@ function main_gpu(params)
     end setup=(fill!($b_gpu, 0.0))
     @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_atomic_cuda = @benchmark begin
             @call_kernel cuda_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
@@ -1167,7 +1155,6 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_atomic_hip = @benchmark begin
             @call_kernel hip_loop_4_atomic $threads_in_block $blocks_in_grid $b_gpu $uh_faces_gpu
@@ -1189,7 +1176,6 @@ function main_gpu(params)
     bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 4 global
-    threads_in_block = 256
     t4_global_gpu = @benchmark begin
         gpu_loop_4_global!($dev, $threads_in_block)($b_gpu, $bf_gpu, $uh_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
@@ -1197,7 +1183,6 @@ function main_gpu(params)
     end setup=(fill!($b_gpu, 0.0))
     @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_global_cuda = @benchmark begin
             @call_kernel cuda_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
@@ -1206,7 +1191,6 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_global_hip = @benchmark begin
             @call_kernel hip_loop_4_global $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu
@@ -1227,7 +1211,6 @@ function main_gpu(params)
     b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
 
     # Launch kernel 4 local
-    threads_in_block = 256
     t4_local_gpu = @benchmark begin
         gpu_loop_4_local!($dev, $threads_in_block)($b_gpu, Val($nmax), $uh_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
@@ -1235,7 +1218,6 @@ function main_gpu(params)
     end setup=(fill!($b_gpu, 0.0))
     @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_local_cuda = @benchmark begin
             @call_kernel cuda_loop_4_local $threads_in_block $blocks_in_grid $b_gpu Val($nmax) $uh_faces_gpu
@@ -1244,7 +1226,6 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_local_hip = @benchmark begin
             @call_kernel hip_loop_4_local $threads_in_block $blocks_in_grid $b_gpu Val($nmax) $uh_faces_gpu
@@ -1265,7 +1246,6 @@ function main_gpu(params)
     b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
 
     # Launch kernel 4 shared
-    threads_in_block = 256
     t4_shared_gpu = @benchmark begin
         gpu_loop_4_shared!($dev, $threads_in_block)($b_gpu, Val($nmax), Val($threads_in_block), $uh_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
@@ -1273,7 +1253,6 @@ function main_gpu(params)
     end setup=(fill!($b_gpu, 0.0))
     @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t4_shared_cuda = @benchmark begin
             @call_kernel cuda_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
@@ -1282,7 +1261,6 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         shmem = sizeof(Float64) * nmax * threads_in_block
         t4_shared_hip = @benchmark begin
@@ -1305,7 +1283,6 @@ function main_gpu(params)
     bf_gpu = KA.zeros(dev, Float64, nmax, nfaces)
 
     # Launch kernel 5 atomic
-    threads_in_block = 256
     t5_atomic_gpu = @benchmark begin
         gpu_loop_5_atomic!($dev, $threads_in_block)($b_gpu, $bf_gpu, $uh_faces_gpu, $V_faces_gpu, $dΩ_faces_gpu, ndrange=$nfaces)
         sqrt(sum($b_gpu.^2))
@@ -1313,7 +1290,6 @@ function main_gpu(params)
     end setup=(fill!($b_gpu, 0.0))
     @show sqrt(sum(b_gpu.^2))
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t5_atomic_cuda = @benchmark begin
             @call_kernel cuda_loop_5_atomic $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu $V_faces_gpu $dΩ_faces_gpu
@@ -1322,7 +1298,6 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t5_atomic_hip = @benchmark begin
             @call_kernel hip_loop_5_atomic $threads_in_block $blocks_in_grid $b_gpu $bf_gpu $uh_faces_gpu $V_faces_gpu $dΩ_faces_gpu
@@ -1354,7 +1329,6 @@ function main_gpu(params)
     cpu_loop_6_symbolic!(AI,AJ,V_faces_cpu)
 
     # Launch kernel 6 numeric lookup table
-    threads_in_block = 256
     t6_numeric_ltable_gpu = @benchmark begin
         gpu_loop_6_numeric_ltable!($dev, $threads_in_block)($AV_gpu, $V_faces_gpu, $ltable_gpu, ndrange=$nfaces)
         KA.synchronize($dev)
@@ -1365,7 +1339,6 @@ function main_gpu(params)
     b = A*x
     @show norm(b)
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t6_numeric_ltable_cuda = @benchmark begin
             @call_kernel cuda_loop_6_numeric_ltable $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
@@ -1377,7 +1350,6 @@ function main_gpu(params)
         b = A*x
         @show norm(b)
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t6_numeric_ltable_hip = @benchmark begin
             @call_kernel hip_loop_6_numeric_ltable $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu
@@ -1412,7 +1384,6 @@ function main_gpu(params)
     cpu_loop_6_symbolic!(AI,AJ,V_faces_cpu)
 
     # Launch kernel 6 numeric lookup table local
-    threads_in_block = 256
     t6_numeric_ltable_local_gpu = @benchmark begin
         gpu_loop_6_numeric_ltable_local!($dev, $threads_in_block)($AV_gpu, $V_faces_gpu, $ltable_gpu, Val($nmax), ndrange=$nfaces)
         KA.synchronize($dev)
@@ -1423,7 +1394,6 @@ function main_gpu(params)
     b = A*x
     @show norm(b)
     if is_cuda_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t6_numeric_ltable_local_cuda = @benchmark begin
             @call_kernel cuda_loop_6_numeric_ltable_local $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu Val($nmax)
@@ -1435,7 +1405,6 @@ function main_gpu(params)
         b = A*x
         @show norm(b)
     elseif is_rocm_available()
-        threads_in_block = 256
         blocks_in_grid = cld(nfaces, threads_in_block)
         t6_numeric_ltable_local_hip = @benchmark begin
             @call_kernel hip_loop_6_numeric_ltable_local $threads_in_block $blocks_in_grid $AV_gpu $V_faces_gpu $ltable_gpu Val($nmax)
