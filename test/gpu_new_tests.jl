@@ -91,7 +91,7 @@ else
         error("No GPU backend available to compile @alloc_shared_dyn")
     end
     macro call_kernel(args...)
-        #error("No GPU backend available to compile @call_kernel")
+        error("No GPU backend available to compile @call_kernel")
     end
     macro call_kernel_shmem(args...)
         error("No GPU backend available to compile @call_kernel_shmem")
@@ -1440,11 +1440,14 @@ function main_gpu(params)
 end
 
 for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
-    println("k = ", k)
     layouts = (GT.face_minor_array,GT.face_major_array)
     for face_dofs_layout in layouts
         for face_nodes_layout in layouts
             params = (;face_nodes_layout,face_dofs_layout,k)
+            println("k = ", k)
+            println("face_dofs_layout = ", face_dofs_layout)
+            println("face_nodes_layout = ", face_nodes_layout)
+            println()
             println("Running CPU version...")
             main_cpu(params)
             println()
