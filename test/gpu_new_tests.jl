@@ -39,13 +39,16 @@ function select_backend()
     if is_cuda_available()
         dev = first(CUDA.devices())
         println("using CUDA backend: $(CUDA.name(dev))")
+        println()
         return CUDABackend()
     elseif is_rocm_available()
         dev = first(AMDGPU.devices())
         println("using AMD backend: $(AMDGPU.HIP.name(dev))")
+        println()
         return ROCBackend()
     else
         println("using CPU backend")
+        println()
         return CPU()
     end
 end
@@ -99,6 +102,16 @@ else
 end
 
 const dev = select_backend()
+
+function max_shared_memory_per_block()
+    if is_cuda_available()
+        return Int(CUDA.attribute(first(CUDA.devices()), CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK))
+    elseif is_rocm_available()
+        return Int(AMDGPU.HIP.properties(first(AMDGPU.devices())).maxSharedMemoryPerBlock)
+    else
+        return typemax(Int)
+    end
+end
 
 f(x) = 2*sin(sum(x))
 
@@ -1243,40 +1256,46 @@ function main_gpu(params)
         println("Loop 4 (local): HIP speedup is ", (nfaces / time(t4_local_hip) * 1e9) / (nfaces / time(t4_local_gpu) * 1e9))
     end
 
-    b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
+    shmem_needed = sizeof(Float64) * nmax * threads_in_block
+    shmem_max = max_shared_memory_per_block()
+    if shmem_needed <= shmem_max
+        b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
 
-    # Launch kernel 4 shared
-    t4_shared_gpu = @benchmark begin
-        gpu_loop_4_shared!($dev, $threads_in_block)($b_gpu, Val($nmax), Val($threads_in_block), $uh_faces_gpu, ndrange=$nfaces)
-        sqrt(sum($b_gpu.^2))
-        KA.synchronize($dev)
-    end setup=(fill!($b_gpu, 0.0))
-    @show sqrt(sum(b_gpu.^2))
-    if is_cuda_available()
-        blocks_in_grid = cld(nfaces, threads_in_block)
-        t4_shared_cuda = @benchmark begin
-            @call_kernel cuda_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+        # Launch kernel 4 shared
+        t4_shared_gpu = @benchmark begin
+            gpu_loop_4_shared!($dev, $threads_in_block)($b_gpu, Val($nmax), Val($threads_in_block), $uh_faces_gpu, ndrange=$nfaces)
             sqrt(sum($b_gpu.^2))
-            CUDA.synchronize()
+            KA.synchronize($dev)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
-    elseif is_rocm_available()
-        blocks_in_grid = cld(nfaces, threads_in_block)
-        shmem = sizeof(Float64) * nmax * threads_in_block
-        t4_shared_hip = @benchmark begin
-            @call_kernel_shmem hip_loop_4_shared $threads_in_block $blocks_in_grid $shmem $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
-            sqrt(sum($b_gpu.^2))
-            AMDGPU.synchronize()
-        end setup=(fill!($b_gpu, 0.0))
-        @show sqrt(sum(b_gpu.^2))
-    end
-    println("Loop 4 (shared): KernelAbstractions throughput is ", nfaces / time(t4_shared_gpu) * 1e9, " faces per second.")
-    if is_cuda_available()
-        println("Loop 4 (shared): CUDA throughput is ", nfaces / time(t4_shared_cuda) * 1e9, " faces per second.")
-        println("Loop 4 (shared): CUDA speedup is ", (nfaces / time(t4_shared_cuda) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
-    elseif is_rocm_available()
-        println("Loop 4 (shared): HIP throughput is ", nfaces / time(t4_shared_hip) * 1e9, " faces per second.")
-        println("Loop 4 (shared): HIP speedup is ", (nfaces / time(t4_shared_hip) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
+        if is_cuda_available()
+            blocks_in_grid = cld(nfaces, threads_in_block)
+            t4_shared_cuda = @benchmark begin
+                @call_kernel cuda_loop_4_shared $threads_in_block $blocks_in_grid $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+                sqrt(sum($b_gpu.^2))
+                CUDA.synchronize()
+            end setup=(fill!($b_gpu, 0.0))
+            @show sqrt(sum(b_gpu.^2))
+        elseif is_rocm_available()
+            blocks_in_grid = cld(nfaces, threads_in_block)
+            shmem = sizeof(Float64) * nmax * threads_in_block
+            t4_shared_hip = @benchmark begin
+                @call_kernel_shmem hip_loop_4_shared $threads_in_block $blocks_in_grid $shmem $b_gpu Val($nmax) Val($threads_in_block) $uh_faces_gpu
+                sqrt(sum($b_gpu.^2))
+                AMDGPU.synchronize()
+            end setup=(fill!($b_gpu, 0.0))
+            @show sqrt(sum(b_gpu.^2))
+        end
+        println("Loop 4 (shared): KernelAbstractions throughput is ", nfaces / time(t4_shared_gpu) * 1e9, " faces per second.")
+        if is_cuda_available()
+            println("Loop 4 (shared): CUDA throughput is ", nfaces / time(t4_shared_cuda) * 1e9, " faces per second.")
+            println("Loop 4 (shared): CUDA speedup is ", (nfaces / time(t4_shared_cuda) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
+        elseif is_rocm_available()
+            println("Loop 4 (shared): HIP throughput is ", nfaces / time(t4_shared_hip) * 1e9, " faces per second.")
+            println("Loop 4 (shared): HIP speedup is ", (nfaces / time(t4_shared_hip) * 1e9) / (nfaces / time(t4_shared_gpu) * 1e9))
+        end
+    else
+        println("Loop 4 (shared): skipped (requires $(shmem_needed) bytes, max is $(shmem_max) bytes per block)")
     end
 
     b_gpu = KA.zeros(dev, Float64, GT.num_free_dofs(V))
@@ -1439,7 +1458,7 @@ function main_gpu(params)
     cpu_loop_6_symbolic!(AI,AJ,V_faces_cpu)
 end
 
-for k in [2, 10, 25, 100, 250, 500, 1000, 2500]
+for k in [10, 100, 1000, 10000]
     layouts = (GT.face_minor_array,GT.face_major_array)
     for face_dofs_layout in layouts
         for face_nodes_layout in layouts
