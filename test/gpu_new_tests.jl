@@ -107,7 +107,7 @@ function max_shared_memory_per_block()
     if is_cuda_available()
         return Int(CUDA.attribute(first(CUDA.devices()), CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK))
     elseif is_rocm_available()
-        return Int(AMDGPU.HIP.properties(first(AMDGPU.devices())).maxSharedMemoryPerBlock)
+        return Int(AMDGPU.HIP.properties(first(AMDGPU.devices())).sharedMemPerBlock)
     else
         return typemax(Int)
     end
