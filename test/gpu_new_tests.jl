@@ -287,16 +287,17 @@ function cpu_loop_6_numeric_ltable!(AV,V_faces,ltable)
 end
 
 function main_cpu(params)
-    (;face_nodes_layout,face_dofs_layout,k) = params
+    (;face_nodes_layout,face_dofs_layout,n) = params
 
     # Start at CPU
     domain = (0,1,0,1)
-    cells = (k,k)
+    cells = (n,n)
     mesh = GT.cartesian_mesh(domain,cells)
     Ω = GT.interior(mesh)
     degree = 4
     dΩ = GT.quadrature(Ω,degree)
 
+    k = 1
     V = GT.lagrange_space(Ω,k)
     u = GT.analytical_field(f,Ω)
     uh = GT.interpolate(u,V)
@@ -1000,16 +1001,17 @@ end
 end
 
 function main_gpu(params)
-    (;face_nodes_layout,face_dofs_layout,k) = params
+    (;face_nodes_layout,face_dofs_layout,n) = params
 
     # Start at CPU
     domain = (0,1,0,1)
-    cells = (k,k)
+    cells = (n,n)
     mesh = GT.cartesian_mesh(domain,cells)
     Ω = GT.interior(mesh)
     degree = 4
     dΩ = GT.quadrature(Ω,degree)
 
+    k = 1
     V = GT.lagrange_space(Ω,k)
     u = GT.analytical_field(f,Ω)
     uh = GT.interpolate(u,V)
@@ -1458,12 +1460,12 @@ function main_gpu(params)
     cpu_loop_6_symbolic!(AI,AJ,V_faces_cpu)
 end
 
-for k in [10, 100, 1000, 10000]
+for n in [10, 100, 1000, 10000]
     layouts = (GT.face_minor_array,GT.face_major_array)
     for face_dofs_layout in layouts
         for face_nodes_layout in layouts
-            params = (;face_nodes_layout,face_dofs_layout,k)
-            println("k = ", k)
+            params = (;face_nodes_layout,face_dofs_layout,n)
+            println("n = ", n)
             println("face_dofs_layout = ", face_dofs_layout)
             println("face_nodes_layout = ", face_nodes_layout)
             println()
