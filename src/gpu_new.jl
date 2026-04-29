@@ -37,7 +37,7 @@ struct FaceMajorArray{A,B} <: AbstractType
     stride::B
 end
 
-Base.length(a::FaceMajorArray) = div(length(a.data),a.stride)
+Base.length(a::FaceMajorArray) = a.stride
 
 function Base.getindex(a::FaceMajorArray,f::Integer)
     stride = a.stride
