@@ -384,11 +384,6 @@ end
 
 import KernelAbstractions as KA
 
-function shape_function_at_mesh_face(::GPUThreadWorkspace{T,ndofs}, mesh_face) where {T,ndofs}
-    #KA.@private T ndofs  # Also possible using KA
-    zero(MVector{ndofs,T})
-end
-
 function shape_function_at_mesh_face(::GPUSharedMemWorkspace{threads_per_block,T,ndofs}, mesh_face) where {threads_per_block,T,ndofs}
     shared_alloc = KA.@localmem T (ndofs,threads_per_block)
     thread_id = KA.@index(Local,Linear)
@@ -404,6 +399,7 @@ function at_mesh_face(state::TabulatedSpace,mesh_face)
         reference_shape_functions(Val(:gradient), state),
         reference_shape_functions(Val(:jacobian), state),
     )
+
     TabulatedFace(
         state,
         id(mesh_face),
@@ -417,18 +413,49 @@ function at_point_id(state::TabulatedSpace,face,i)
     at_mesh_point(state,face,mesh_point)
 end
 
+struct SpacePointWorkspace{A,B,C,D,E,F,J} <: AbstractType
+    shape_functions_value::A
+    shape_functions_gradient::B
+    shape_functions_jacobian::C
+    reference_shape_functions_value::D
+    reference_shape_functions_gradient::E
+    reference_shape_functions_jacobian::F
+    jacobian::J
+end
+
+jacobian(a::SpacePointWorkspace) = a.jacobian
+reference_shape_functions(::Val{:value},a::SpacePointWorkspace) = a.reference_shape_functions_value
+reference_shape_functions(::Val{:gradient},a::SpacePointWorkspace) = a.reference_shape_functions_gradient
+reference_shape_functions(::Val{:jacobian},a::SpacePointWorkspace) = a.reference_shape_functions_jacobian
+shape_functions(::Val{:value},a::SpacePointWorkspace) = a.shape_functions_value
+shape_functions(::Val{:gradient},a::SpacePointWorkspace) = a.shape_functions_gradient
+shape_functions(::Val{:jacobian},a::SpacePointWorkspace) = a.shape_functions_jacobian
+
 function at_mesh_point(state::TabulatedSpace,face,mesh_point)
     point = PointNew(face,id(mesh_point),mesh_point)
-    if state.shape_functions_value !== nothing
-        map_shape_functions!(Val(:value),point)
-    end
-    if state.shape_functions_gradient !== nothing
-        map_shape_functions!(Val(:gradient),point)
-    end
-    if state.shape_functions_jacobian !== nothing
-        map_shape_functions!(Val(:jacobian),point)
-    end
-    point
+    jacobian = GT.jacobian(point)
+    shape_functions_value = shape_functions(Val(:value), face)
+    shape_functions_gradient = shape_functions(Val(:gradient), face)
+    shape_functions_jacobian = shape_functions(Val(:jacobian), face)
+    reference_shape_functions_value = reference_shape_functions(Val(:value), face)
+    reference_shape_functions_gradient = reference_shape_functions(Val(:gradient), face)
+    reference_shape_functions_jacobian = reference_shape_functions(Val(:jacobian), face)
+
+    shape_functions_value = map_shape_functions(Val(:value),point,shape_functions_value)
+    shape_functions_gradient = map_shape_functions(Val(:gradient),point,shape_functions_gradient)
+    shape_functions_jacobian = map_shape_functions(Val(:jacobian),point,shape_functions_jacobian)
+
+    point_workspace = SpacePointWorkspace(
+        shape_functions_value,
+        shape_functions_gradient,
+        shape_functions_jacobian,
+        reference_shape_functions_value,
+        reference_shape_functions_gradient,
+        reference_shape_functions_jacobian,
+        jacobian,
+    )
+
+    PointNew(face,id(mesh_point),point_workspace)
 end
 
 ## ===========
@@ -848,17 +875,16 @@ end
 end
 
 function shape_functions(f,point::AbstractPointNew)
-    i_fun = shape_functions(f,parent(point))
+    shape_functions(f,workspace(point))
 end
 
 function reference_shape_functions(f,point::AbstractPointNew)
-    i_fun = reference_shape_functions(f,parent(point))
+    reference_shape_functions(f,workspace(point))
 end
 
-function map_shape_functions!(f,point::AbstractPointNew)
+function map_shape_functions(f,point::AbstractPointNew,alloc)
     space = workspace(point)
-    i_fun = shape_functions(f,point)
-    i_p_ref_fun = reference_shape_functions(f,point)
+    i_p_ref_fun = reference_shape_functions(f,parent(point))
     p = id(point)
     ndofs = size(i_p_ref_fun,1)
     i = 0
@@ -866,8 +892,26 @@ function map_shape_functions!(f,point::AbstractPointNew)
         i += 1
         ref_fun = i_p_ref_fun[i,p]
         fun = map_shape_function(f,space,i,point,ref_fun)
-        i_fun[i] = fun
+        alloc[i] = fun
     end
+    alloc
+end
+
+function map_shape_functions(f, point::AbstractPointNew, ::GPUThreadWorkspace{T,max_ndofs}) where {T,max_ndofs}
+    space = workspace(point)
+    i_p_ref_fun = reference_shape_functions(f,parent(point))
+    p = id(point)
+    ndofs = size(i_p_ref_fun,1)
+    map(enumerate_static(zero(SVector{max_ndofs,T}))) do (i, v)
+        if i <= ndofs
+            map_shape_function(f, space, i, point, i_p_ref_fun[i, p])
+        else
+            zero(v)
+        end        
+    end
+end
+
+function map_shape_functions(f,point::AbstractPointNew,::Nothing)
     nothing
 end
 
@@ -898,7 +942,7 @@ end
 
 function field(f,point::AbstractPointNew)
     alloc = GT.tabulated_field(parent(point))
-    i_fun = shape_functions(f,parent(point))
+    i_fun = shape_functions(f,point)
     @assert i_fun !== nothing
     free_dof_val = free_values(alloc)
     diri_dof_val = dirichlet_values(alloc)
