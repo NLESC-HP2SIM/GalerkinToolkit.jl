@@ -42,6 +42,5 @@ include("visualization.jl")
 include("passes.jl")
 include("constraints.jl")
 include("gpu.jl")
-include("gpu.jl")
 
 end # module
