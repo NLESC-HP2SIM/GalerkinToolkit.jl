@@ -9,6 +9,7 @@ import Atomix
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
 import KernelAbstractions as KA
+using KernelAbstractions: @kernel, @index, @localmem
 using StaticArrays
 
 const HAS_CUDA = try
