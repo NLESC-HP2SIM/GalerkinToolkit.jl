@@ -382,14 +382,6 @@ function shape_function_at_mesh_face(shape_function::GPUGlobalWorkspace, mesh_fa
     view(shape_function.alloc,:,id(mesh_face))
 end
 
-import KernelAbstractions as KA
-
-function shape_function_at_mesh_face(::GPUSharedMemWorkspace{threads_per_block,T,ndofs}, mesh_face) where {threads_per_block,T,ndofs}
-    shared_alloc = KA.@localmem T (ndofs,threads_per_block)
-    thread_id = KA.@index(Local,Linear)
-    view(shared_alloc,:,thread_id)
-end
-
 function at_mesh_face(state::TabulatedSpace,mesh_face)
     workspace = FaceWorkspace(
         shape_function_at_mesh_face(shape_functions(Val(:value), state), mesh_face),

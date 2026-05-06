@@ -8,10 +8,8 @@ using BenchmarkTools
 import Atomix
 import PartitionedArrays as PA
 import GalerkinToolkit as GT
-using KernelAbstractions
 import KernelAbstractions as KA
 using StaticArrays
-using Cthulhu
 
 const HAS_CUDA = try
     @eval using CUDA
