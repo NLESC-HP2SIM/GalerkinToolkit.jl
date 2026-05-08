@@ -100,6 +100,7 @@ struct TabulatedMesh{A,B,C,D,E,F,G,H,I,J} <: AbstractTabulation
     reference_weights::I
     reference_coordinates::J
 end
+
 tabulated_mesh(a::TabulatedMesh) = a
 reference_shape_functions(::typeof(value),a::TabulatedMesh) = a.reference_shape_functions_value
 reference_shape_functions(::typeof(gradient),a::TabulatedMesh) = a.reference_shape_functions_gradient
@@ -175,6 +176,7 @@ end
 struct MeshPointWorkspace{A} <: AbstractType
     jacobian::A
 end
+
 jacobian(a::MeshPointWorkspace) = a.jacobian
 
 function tabulate(mesh::AbstractMesh, valD, quadrature::AbstractQuadrature)
@@ -246,19 +248,19 @@ function tabulate(space::AbstractSpace,quadrature::AbstractQuadrature;tabulate=(
     D = GT.num_dims(mesh)
     tabulated_mesh = GT.tabulate(mesh,Val(D),quadrature)
     if GT.value in tabulate
-        reference_shape_functions_value, shape_functions_value = allocate_shape_funcions(value,space,tabulated_mesh)
+        reference_shape_functions_value, shape_functions_value = allocate_shape_functions(value,space,tabulated_mesh)
     else
         reference_shape_functions_value = nothing
         shape_functions_value = nothing
     end
     if ForwardDiff.gradient in tabulate
-        reference_shape_functions_gradient, shape_functions_gradient = allocate_shape_funcions(gradient,space,tabulated_mesh)
+        reference_shape_functions_gradient, shape_functions_gradient = allocate_shape_functions(gradient,space,tabulated_mesh)
     else
         reference_shape_functions_gradient = nothing
         shape_functions_gradient = nothing
     end
     if ForwardDiff.jacobian in tabulate
-        reference_shape_functions_jacobian, shape_functions_jacobian = allocate_shape_funcions(jacobian,space,tabulated_mesh)
+        reference_shape_functions_jacobian, shape_functions_jacobian = allocate_shape_functions(jacobian,space,tabulated_mesh)
     else
         reference_shape_functions_jacobian = nothing
         shape_functions_jacobian = nothing
@@ -696,7 +698,7 @@ function reference_shape_functions(f,space::AbstractSpace,quadrature::AbstractQu
     first(rid_to_tab)
 end
 
-function allocate_shape_funcions(f,space,tabulated_mesh)
+function allocate_shape_functions(f,space,tabulated_mesh)
     quadrature = GT.quadrature(tabulated_mesh)
     face = each_face_new(tabulated_mesh)[1]
     point = each_point_new(face)[1]
@@ -899,7 +901,7 @@ function map_shape_functions(f, point::AbstractPointNew, ::GPUThreadWorkspace{T,
             map_shape_function(f, space, i, point, i_p_ref_fun[i, p])
         else
             zero(v)
-        end        
+        end
     end
 end
 

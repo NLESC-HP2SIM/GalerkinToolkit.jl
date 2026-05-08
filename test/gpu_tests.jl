@@ -301,6 +301,13 @@ function main_cpu(params)
     u = GT.analytical_field(f,Ω)
     uh = GT.interpolate(u,V)
 
+    println("num_dims = ", GT.num_dims(V))
+    println("num_faces = ", GT.num_faces(mesh))
+    println("num_free_dofs = ", GT.num_free_dofs(V))
+    println("num_dirichlet_dofs = ", GT.num_dirichlet_dofs(V))
+    println("num_dofs = ", GT.num_dofs(V))
+    println("max_num_reference_dofs = ", GT.max_num_reference_dofs(V))
+
     tabulate = (GT.value,GT.gradient)
     dΩ_faces_cpu = GT.each_face_new(dΩ)
     V_faces_cpu = GT.each_face_new(V,dΩ;tabulate)
@@ -472,7 +479,7 @@ if is_cuda_available()
             sx = GT.shape_functions(GT.gradient,uh_point)
             dx = GT.weight(uh_point)
             ux_dx = ux*dx
-            bf = map(enumerate_static(bf)) do (i, bfi) 
+            bf = map(enumerate_static(bf)) do (i, bfi)
                 bfi + (i <= n ? ux_dx⋅sx[i] : 0)
             end
         end
@@ -689,7 +696,7 @@ elseif is_rocm_available()
             sx = GT.shape_functions(GT.gradient,uh_point)
             dx = GT.weight(uh_point)
             ux_dx = ux*dx
-            bf = map(enumerate_static(bf)) do (i, bfi) 
+            bf = map(enumerate_static(bf)) do (i, bfi)
                 bfi + (i <= n ? ux_dx⋅sx[i] : 0)
             end
         end
@@ -894,7 +901,7 @@ end
             sx = GT.shape_functions(GT.gradient,uh_point)
             dx = GT.weight(uh_point)
             ux_dx = ux*dx
-            bf = map(enumerate_static(bf)) do (i, bfi) 
+            bf = map(enumerate_static(bf)) do (i, bfi)
                 bfi + (i <= n ? ux_dx⋅sx[i] : 0)
             end
         end
@@ -1033,9 +1040,8 @@ function main_gpu(params)
     uh_faces_gpu = adapt(dev, uh_faces_cpu)
 
     # Set the workspace location depending on the granularity
-    #Maybe workspace location should not be independent and depend on granularity
     threads_in_block = 256
-    workspace_location = GT.GPUGlobalWorkspace 
+    workspace_location = GT.GPUGlobalWorkspace
     # workspace_location = GT.GPUThreadWorkspace
     # workspace_location = GT.GPUSharedMemWorkspace{threads_in_block}
     dΩ_faces_gpu = GT.change_workspace_location(dΩ_faces_gpu;workspace_location)
@@ -1055,6 +1061,7 @@ function main_gpu(params)
         KA.synchronize($dev)
     end
     @show sum(contributions)
+
     if is_cuda_available()
         blocks_in_grid = cld(nfaces, threads_in_block)
         t1_cuda = @benchmark begin
@@ -1072,13 +1079,14 @@ function main_gpu(params)
         end
         @show sum(contributions)
     end
+
     println("Loop 1: KernelAbstractions throughput is ", nfaces / time(t1_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 1: CUDA throughput is ", nfaces / time(t1_cuda) * 1e9, " faces per second.")
-        println("Loop 1: CUDA speedup is ", (nfaces / time(t1_cuda) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
+        println("Loop 1: CUDA speedup is ", (nfaces / time(t1_cuda)) / (nfaces / time(t1_gpu)))
     elseif is_rocm_available()
         println("Loop 1: HIP throughput is ", nfaces / time(t1_hip) * 1e9, " faces per second.")
-        println("Loop 1: HIP speedup is ", (nfaces / time(t1_hip) * 1e9) / (nfaces / time(t1_gpu) * 1e9))
+        println("Loop 1: HIP speedup is ", (nfaces / time(t1_hip)) / (nfaces / time(t1_gpu)))
     end
 
     contributions = KA.zeros(dev, Float64, nfaces)
@@ -1107,6 +1115,7 @@ function main_gpu(params)
         end
         @show sum(contributions)
     end
+
     println("Loop 2: KernelAbstractions throughput is ", nfaces / time(t2_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 2: CUDA throughput is ", nfaces / time(t2_cuda) * 1e9, " faces per second.")
@@ -1142,6 +1151,7 @@ function main_gpu(params)
         end
         @show sum(contributions)
     end
+
     println("Loop 3: KernelAbstractions throughput is ", nfaces / time(t3_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 3: CUDA throughput is ", nfaces / time(t3_cuda) * 1e9, " faces per second.")
@@ -1177,6 +1187,7 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     end
+
     println("Loop 4 (atomic): KernelAbstractions throughput is ", nfaces / time(t4_atomic_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 4 (atomic): CUDA throughput is ", nfaces / time(t4_atomic_cuda) * 1e9, " faces per second.")
@@ -1213,6 +1224,7 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     end
+
     println("Loop 4 (global): KernelAbstractions throughput is ", nfaces / time(t4_global_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 4 (global): CUDA throughput is ", nfaces / time(t4_global_cuda) * 1e9, " faces per second.")
@@ -1248,6 +1260,7 @@ function main_gpu(params)
         end setup=(fill!($b_gpu, 0.0))
         @show sqrt(sum(b_gpu.^2))
     end
+
     println("Loop 4 (local): KernelAbstractions throughput is ", nfaces / time(t4_local_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 4 (local): CUDA throughput is ", nfaces / time(t4_local_cuda) * 1e9, " faces per second.")
@@ -1334,7 +1347,7 @@ function main_gpu(params)
         println("Loop 5 (atomic): HIP throughput is ", nfaces / time(t5_atomic_hip) * 1e9, " faces per second.")
         println("Loop 5 (atomic): HIP speedup is ", (nfaces / time(t5_atomic_hip) * 1e9) / (nfaces / time(t5_atomic_gpu) * 1e9))
     end
-   
+
     b = zeros(GT.num_free_dofs(V))
     num_nz = cpu_loop_6_count(V_faces_cpu)
     n_global = GT.num_dofs(V)
@@ -1358,6 +1371,7 @@ function main_gpu(params)
     PA.sparse_matrix!(A,AV_cpu,Acache)
     b = A*x
     @show norm(b)
+
     if is_cuda_available()
         blocks_in_grid = cld(nfaces, threads_in_block)
         t6_numeric_ltable_cuda = @benchmark begin
@@ -1381,6 +1395,7 @@ function main_gpu(params)
         b = A*x
         @show norm(b)
     end
+
     println("Loop 6 (numeric lookup table): KernelAbstractions throughput is ", nfaces / time(t6_numeric_ltable_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 6 (numeric lookup table): CUDA throughput is ", nfaces / time(t6_numeric_ltable_cuda) * 1e9, " faces per second.")
@@ -1436,6 +1451,7 @@ function main_gpu(params)
         b = A*x
         @show norm(b)
     end
+
     println("Loop 6 (numeric lookup table local): KernelAbstractions throughput is ", nfaces / time(t6_numeric_ltable_local_gpu) * 1e9, " faces per second.")
     if is_cuda_available()
         println("Loop 6 (numeric lookup table local): CUDA throughput is ", nfaces / time(t6_numeric_ltable_local_cuda) * 1e9, " faces per second.")
@@ -1468,9 +1484,11 @@ for n in [10, 100, 1000, 10000]
             println("face_dofs_layout = ", face_dofs_layout)
             println("face_nodes_layout = ", face_nodes_layout)
             println()
+
             println("Running CPU version...")
             main_cpu(params)
             println()
+
             println("Running GPU version...")
             main_gpu(params)
             println()
