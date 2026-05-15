@@ -70,17 +70,8 @@ GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 NonlinearSolve = "8913a72c-1f9b-4ce2-8d82-65094dcecaec"
-<<<<<<< HEAD
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
 
 [targets]
 test = ["Test", "Gmsh", "GLMakie", "WriteVTK", "LinearSolve", "NonlinearSolve", "DifferentialEquations"]
-=======
-OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
-
-[targets]
-test = ["Test", "Gmsh", "GLMakie", "WriteVTK","LinearSolve","NonlinearSolve","OrdinaryDiffEq"]
-
-
->>>>>>> origin/main
